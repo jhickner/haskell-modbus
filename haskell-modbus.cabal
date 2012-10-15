@@ -1,7 +1,7 @@
 name:                haskell-modbus
 version:             0.1
 synopsis:            A haskell implementation of the Modbus protocol
--- description:         
+description:         A haskell implementation of the Modbus protocol
 homepage:            http://www.github.com/jhickner/haskell-modbus
 license:             BSD3
 license-file:        LICENSE
