@@ -1,5 +1,5 @@
 module Data.Modbus 
-  ( ModbusResponse
+  ( ModbusResponse(..)
   , SlaveId
   , Address
   , Count
@@ -27,6 +27,7 @@ import qualified Data.ByteString.Lazy as BL
 import Data.List (foldl')
 
 import Control.Monad
+import Control.Exception (IOException, handle)
 import Data.Maybe
 
 
@@ -111,13 +112,14 @@ readSock sock = do
 -- | open a socket, send a modbus query and retrieve the response
 modbusQuery :: HostName -> Int -> ModbusCommand 
                -> IO (Either String ModbusResponse)
-modbusQuery host port command = do
-    sock <- openSocket host port
-    send sock command
-    res <- readSock sock
-    let parsed = parseBS res >>= checkCRC >>= checkCode
-    sClose sock
-    return parsed
+modbusQuery host port command = 
+    handle (\e -> return (Left $ show (e :: IOException))) $ do
+        sock <- openSocket host port
+        send sock command
+        res <- readSock sock
+        let parsed = parseBS res >>= checkCRC >>= checkCode
+        sClose sock
+        return parsed
   where parseBS bs = eitherResult $ parse modbusResponse bs
   
 
