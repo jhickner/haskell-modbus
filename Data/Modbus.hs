@@ -1,13 +1,10 @@
 module Data.Modbus 
   ( ModbusResponse(..)
-  , SlaveId
-  , Address
-  , Count
-  , ModbusCommand
   , readHoldingRegisters
   , readCoils
   , modbusQuery
-  , octetsToWord32
+  , pack16
+  , pack32
   ) where
 
 
@@ -31,18 +28,6 @@ import Control.Exception (IOException, handle)
 import Data.Maybe
 
 
--- | a Modbus slave id
-type SlaveId = Word8
-
--- | a register or coil address 
-type Address = Word16
-
--- | the number of registers or coils to read
-type Count   = Word16
-
--- | a bytestring representing a prepared Modbus command
-type ModbusCommand = BL.ByteString
-
 -- | the Modbus response from the server 
 data ModbusResponse = ModbusResponse
     { mSlaveId :: Word8
@@ -53,27 +38,31 @@ data ModbusResponse = ModbusResponse
 
 
 -- | read holding registers
-readHoldingRegisters :: SlaveId -> Address -> Count -> ModbusCommand
+readHoldingRegisters :: Int -> Int -> Int -> [Word8]
 readHoldingRegisters sid addr cnt =
-    BL.pack $ addCRC [ sid
-                     , 0x03
-                     , hiByte addr
-                     , loByte addr
-                     , hiByte cnt
-                     , loByte cnt
-                     ]
+    addCRC [ fromIntegral sid
+           , 0x03
+           , hiByte addr'
+           , loByte addr'
+           , hiByte cnt'
+           , loByte cnt'
+           ]
+    where addr' = fromIntegral addr
+          cnt'   = fromIntegral cnt
 
 
 -- | read coils
-readCoils :: SlaveId -> Address -> Count -> ModbusCommand
+readCoils :: Int -> Int -> Int -> [Word8]
 readCoils sid addr cnt =
-    BL.pack $ addCRC [ sid
-                     , 0x01
-                     , hiByte addr
-                     , loByte addr
-                     , hiByte cnt
-                     , loByte cnt
-                     ]
+    addCRC [ fromIntegral sid
+           , 0x01
+           , hiByte addr'
+           , loByte addr'
+           , hiByte cnt'
+           , loByte cnt'
+           ]
+    where addr' = fromIntegral addr
+          cnt'   = fromIntegral cnt
 
 
 -- Modbus CRC is little-endian on the wire
@@ -86,11 +75,21 @@ hiByte = fromIntegral . (`shiftR` 8)
 loByte :: Word16 -> Word8
 loByte = fromIntegral . (.&. 0xff)
 
--- | convert a list of (4) Word8s into a single Word32
-octetsToWord32  :: [Word8] -> Word32
-octetsToWord32 = foldl' acc 0
+upShift :: [Word8] -> Int
+upShift = foldl' acc 0
   where acc a o = (a `shiftL` 8) .|. fromIntegral o
 
+-- | pack a list of Word8s into a list of Word16s
+pack16 :: [Word8] -> [Word16]
+pack16 = map (fromIntegral . upShift) . chunk 2
+
+-- | pack a list of Word8s into a list of Word32s
+pack32 :: [Word8] -> [Word32]
+pack32 = map (fromIntegral . upShift) . chunk 4
+
+chunk :: Int -> [a] -> [[a]]
+chunk _ [] = []
+chunk n xs = y1 : chunk n y2 where (y1,y2) = splitAt n xs
 
 -- | open a socket to the given host and port
 openSocket :: HostName -> Int -> IO Socket
@@ -110,12 +109,12 @@ readSock sock = do
 
 
 -- | open a socket, send a modbus query and retrieve the response
-modbusQuery :: HostName -> Int -> ModbusCommand 
+modbusQuery :: HostName -> Int -> [Word8]
                -> IO (Either String ModbusResponse)
 modbusQuery host port command = 
     handle (\e -> return (Left $ show (e :: IOException))) $ do
         sock <- openSocket host port
-        send sock command
+        send sock (BL.pack command)
         res <- readSock sock
         let parsed = parseBS res >>= checkCRC >>= checkCode
         sClose sock
