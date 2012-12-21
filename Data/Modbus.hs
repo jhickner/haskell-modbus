@@ -48,7 +48,7 @@ readHoldingRegisters sid addr cnt =
            , loByte cnt'
            ]
     where addr' = fromIntegral addr
-          cnt'   = fromIntegral cnt
+          cnt'  = fromIntegral cnt
 
 
 -- | read coils
@@ -62,7 +62,7 @@ readCoils sid addr cnt =
            , loByte cnt'
            ]
     where addr' = fromIntegral addr
-          cnt'   = fromIntegral cnt
+          cnt'  = fromIntegral cnt
 
 
 -- Modbus CRC is little-endian on the wire
@@ -141,13 +141,13 @@ checkCode p = if mCode p >= 0x80
 modbusResponse :: Parser ModbusResponse 
 modbusResponse = do
     slaveId <- anyWord8
-    code <- anyWord8
+    code    <- anyWord8
     payload <- modbusPayload code
-    crc <- takeWord8 2
+    crc     <- takeWord8 2
     return $ ModbusResponse slaveId code payload crc
   where modbusPayload code
           | code `elem` [1, 2, 3, 4] = do
-              n <- anyWord8
+              n   <- anyWord8
               msg <- takeWord8 (fromIntegral n)
               return $ n : msg
           | code `elem` [5, 6, 15, 16]   = takeWord8 4
