@@ -1,6 +1,6 @@
 module Main where
 
-import Modbus
+import Data.Modbus
 import Network
 import Network.Socket
 

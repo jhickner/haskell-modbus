@@ -1,7 +1,7 @@
 module Main where
 
+import Data.Modbus
 import qualified System.Hardware.Serialport as SP
-import Modbus
 import Control.Concurrent
 
 main :: IO ()

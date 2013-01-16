@@ -1,157 +1,365 @@
 module Data.Modbus 
-  ( ModbusResponse(..)
-  , readHoldingRegisters
-  , readCoils
-  , modbusQuery
-  , pack16
-  , pack32
-  ) where
+       ( ModTransactionResult (..)
+       , AduRequest (..)
+       , AduResponse (..)
+       , PublicModRequest (..)
+       , PublicModResponse (..)
+       , ExceptionCode (..)
+       , retryModFunction
+       , serialTransport
+       , networkTransport
+       , pack
+       ) where
 
-
-import System.Timeout
-
-import Network
-import Network.Socket hiding (send, sendTo, recv, recvFrom)
-import Network.Socket.ByteString.Lazy
-
+import Prelude hiding (catch)
+import qualified Data.ByteString as B
+import qualified System.Hardware.Serialport as SP
+import Data.Attoparsec
+import qualified Data.Attoparsec.Lazy as AL
 import Data.Digest.CRC16
-import Data.Attoparsec.Lazy as AL
 import Data.Word
 import Data.Bits
-import qualified Data.ByteString as B
-import qualified Data.ByteString.Lazy as BL
-
+import Control.Exception
+import qualified Network.Socket as NS -- hiding (send, sendTo, recv, recvFrom)
+import qualified Network.Socket.ByteString as NB
+import System.Timeout
 import Data.List (foldl')
 
-import Control.Monad
-import Control.Exception (IOException, handle)
-import Data.Maybe
+{-- Haskell Modbus implementation                 
+    Modbus protocol is formed from 3 layers that have archaic names:
+       Transport function: Serial or TCP
+       PDU: Protocol Data Unit
+       ADU: Application Data Unit
+
+    The module handles timeouts retries and exceptions, returning a
+    ModTransactionResult indicating status.
+--}
+    
+
+-- Result of Modbus transaction
+data ModTransactionResult a = ModSuccess (AduResponse a)
+                            | ModException (AduResponse a)
+                            | ModTimeout
+                            | ModError String
+                              deriving Show
+                          
+
+-- Datatypes for ADU
+data AduRequest a = AduRequest Word8 a
+                  deriving Show
+data AduResponse b = AduResponse Word8 b
+                   | AduError String
+                   deriving Show
+
+type AduParser b = Parser (AduResponse b)           
+type PduParser a = (Word8 -> Parser (a, [Word8]))
+
+type ModTransport a b = AduRequest a -> IO (ModTransactionResult b)
+
+-- Datatypes for PDU
+data PublicModRequest = ReadDiscreteInputs ModAddress Word16
+                      | ReadCoils ModAddress Word16
+                      | WriteSingleCoil ModAddress Word16
+                      | WriteMultipleCoils ModAddress Word16 Word8 
+                      | ReadInputRegister ModAddress Word16
+                      | ReadHoldingRegisters ModAddress Word16
+                      | WriteSingleRegister ModAddress Word16
+                      | WriteMultipleRegisters ModAddress Word16 Word8
+                        deriving Show
+
+data PublicModResponse = ReadDiscreteInputsResponse Word8 [Word8]
+                       | ReadCoilsResponse Word8 [Word8]
+                       | WriteSingleCoilResponse ModAddress Word16
+                       | WriteMultipleCoilsResponse ModAddress Word16
+                       | ReadInputRegisterResponse Word8 [Word16]
+                       | ReadHoldingRegistersResponse Word8 [Word16]
+                       | WriteSingleRegisterResponse ModAddress Word16
+                       | WriteMultipleRegistersResponse ModAddress Word16
+                       | ExceptionResponse FunctionCode ExceptionCode
+                       | UnknownFunctionResponse FunctionCode
+                         deriving Show
+
+data ExceptionCode = IllegalFunction
+                   | IllegalDataAddress
+                   | IllegalDataValue
+                   | ServerDeviceFailure
+                   | Acknowledge
+                   | ServerDeviceBusy
+                   | MemoryParityError
+                   | GatewayPathUnavailible
+                   | GatewayTargetFailedToRespond
+                   | UnknownExceptionCode                   
+                   deriving Show
+                     
+-- Type aliases for doocumentation
+type Retries = Integer
+type ServerId = Word8
+type CRC = Word16
+type FunctionCode = Word8                       
+type ModAddress = Word16
+type ModCount = Word16
+type TimeoutUs = Int
+
+    
+serialTransport :: SP.SerialPort 
+                -> AduRequest PublicModRequest 
+                -> IO (ModTransactionResult PublicModResponse)    
+serialTransport s = modTransport (serialSend s) 
+                                 (serialRecv s) 
+                                 encodePublicModRequest 
+                                 decodePublicModResponse
+
+networkTransport :: NS.Socket 
+                 -> AduRequest PublicModRequest 
+                 -> IO (ModTransactionResult PublicModResponse)    
+networkTransport s = modTransport (networkSend s) 
+                                  (networkRecv s) 
+                                  encodePublicModRequest 
+                                  decodePublicModResponse
+
+-- Modbus function calls
+
+retryModFunction :: ModTransport a b 
+                 -> TimeoutUs 
+                 -> Retries 
+                 -> AduRequest a 
+                 -> IO (ModTransactionResult b)
+retryModFunction _ _ 0 _ = return $ ModError "Maximum retries exceeded"
+retryModFunction transport to retries adu = do
+  r <- modFunction transport to adu
+  case r of
+    ModSuccess _ -> return r
+    _            -> retryModFunction transport to (retries-1) adu
 
 
--- | the Modbus response from the server 
-data ModbusResponse = ModbusResponse
-    { mSlaveId :: Word8
-    , mCode    :: Word8
-    , mPayload :: [Word8]
-    , mCrc     :: [Word8]
-    } deriving Show
+{-- Generic timout function wraps a transport function
+    with a timeout.
+    Tries a transaction with the transport fn and waits
+    timeout interval before returning the result or
+    ModTimeout
+ --}
+modFunction :: ModTransport a b -> TimeoutUs -> AduRequest a -> IO (ModTransactionResult b)
+modFunction transport to adu = do
+  mRes <- timeout to $ transport adu
+  case mRes of
+    Just mr -> return mr 
+    Nothing -> return ModTimeout              
 
+{-- Modbus serial or network transport drivers --}
+    
+{-- Generic transport function takes send and recieve fns as well    
+    as an encoder and parser for the PduRequest (a) and PduResponse (b)
+    types respectively. Curry this function with your favorite types to
+    create an (AduRequest a) -> IO (ModTransactionResult b).
+--}
+modTransport :: ([Word8] -> IO ()) 
+             -> IO B.ByteString 
+             -> (a -> [Word8]) 
+             -> PduParser b 
+             -> AduRequest a 
+             -> IO (ModTransactionResult b)
+modTransport sendFn recvFn pduEnc pduP adu =
+      catch communicate handler
+      where
+--      communicate :: IO (ModTransactionResult a)
+        communicate = 
+          let outBytes = encodeADU pduEnc adu in do
+            sendFn outBytes
+            bytes <- recvFn
+            resultParse $ parse (aduParser pduP) bytes
+        handler e = return $ ModError $ show (e::IOException) 
+--      resultParse :: Result (AduResponse a) -> IO (ModTransactionResult a)
+        resultParse result =
+          case result of
+            Fail{} -> return $ ModError "Error parsing response msg"
+            Partial p -> do
+              bytes <- recvFn
+              resultParse $ p bytes
+            Done _ adu' ->
+              case adu' of 
+                AduError msg -> return $ ModError msg
+                _ -> return $ ModSuccess adu'
 
--- | read holding registers
-readHoldingRegisters :: Int -> Int -> Int -> [Word8]
-readHoldingRegisters sid addr cnt =
-    addCRC [ fromIntegral sid
-           , 0x03
-           , hiByte addr'
-           , loByte addr'
-           , hiByte cnt'
-           , loByte cnt'
-           ]
-    where addr' = fromIntegral addr
-          cnt'  = fromIntegral cnt
+{-- Functions for the serial or network transport --}
+              
+-- | send a modbus request 
+networkSend :: NS.Socket -> [Word8] -> IO ()
+networkSend sock msg = do
+    NB.send sock (B.pack msg)
+    return ()
 
+-- | retrieve the response          
+networkRecv :: NS.Socket -> IO B.ByteString 
+networkRecv sock = NB.recv sock 512
+          
+-- | send a modbus request 
+serialSend :: SP.SerialPort -> [Word8] -> IO()
+serialSend sp msg = do
+    print $ "--> " ++ show msg
+    SP.send sp $ B.pack msg
+    SP.flush sp
+  
+-- | retrieve the response          
+serialRecv :: SP.SerialPort -> IO B.ByteString
+serialRecv sp = do
+    bytes <- SP.recv sp 10 
+    print $ "<-- " ++ show (B.unpack bytes)
+    return bytes
 
--- | read coils
-readCoils :: Int -> Int -> Int -> [Word8]
-readCoils sid addr cnt =
-    addCRC [ fromIntegral sid
-           , 0x01
-           , hiByte addr'
-           , loByte addr'
-           , hiByte cnt'
-           , loByte cnt'
-           ]
-    where addr' = fromIntegral addr
-          cnt'  = fromIntegral cnt
+{-- Encode an ADU by prepending server id to the PDU encoding 
+    and appending the crc16.
+--}
+encodeADU :: (a -> [Word8]) -> AduRequest a -> [Word8]
+encodeADU encoder (AduRequest id' req) = 
+    let req' = encoder req 
+        msg = id':req' in
+    msg ++ encodeCrc16 (crc16 msg)
 
+{-- I think there may be a different encoding for some TCP
+    implementations. This might need to be implemented.
+--}
+--encodeTcpADU :: AduRequest a -> [Word8]
+--encodeTcpADU (AduRequest id req) = undefined
 
--- Modbus CRC is little-endian on the wire
-addCRC :: [Word8] -> [Word8]
-addCRC msg = msg ++ [loByte crc, hiByte crc] where crc = crc16 msg
+{-- | attoparsec parser for modbus response packets, takes
+     the PDU parser as a parameter.
+--}
+aduParser :: PduParser a -> AduParser a
+aduParser pduParser = do
+    slaveId <- anyWord8
+    code <- anyWord8
+    (resp, bytes) <- pduParser code
+    (crc,_) <- anyCrc16
+    return $ if crc == crc16 (slaveId:code:bytes)
+      then AduResponse slaveId resp
+      else AduError $ "CRC Error on Modbus response from: " ++ show slaveId
 
+{-- Modbus spec defines public and privete function codes.
+    This encoder supports a subset of the public codes.
+    Please extend this function with missing public codes.
+    If you need to support private codes create a new
+    data type and encode/decode functions.
+--}
+encodePublicModRequest :: PublicModRequest -> [Word8]
+encodePublicModRequest req = 
+  case req of
+    ReadDiscreteInputs addr n -> 0x02 : encodeWord16 addr ++ encodeWord16 n
+    ReadCoils addr n -> 0x01 : encodeWord16 addr ++ encodeWord16 n
+    WriteSingleCoil addr val -> 0x05 : encodeWord16 addr ++ encodeWord16 val
+    WriteMultipleCoils addr quantity n -> 
+      0x0F : encodeWord16 addr ++ encodeWord16 quantity ++ [n]
+    ReadInputRegister addr _ -> 0x04 : encodeWord16 addr
+    ReadHoldingRegisters addr n -> 0x3 : encodeWord16 addr ++ encodeWord16 n
+    WriteSingleRegister addr val -> 0x06 : encodeWord16 addr ++ encodeWord16 val
+    WriteMultipleRegisters addr quantity n -> 
+      0x10 : encodeWord16 addr ++ encodeWord16 quantity ++ [n]
+
+{-- Modbus spec defines public and privete function codes.
+    This decoder supports a subset of the public codes.
+    Please extend this function with missing public codes.
+    If you need to support private codes create a new
+    data type and encode/decode functions.
+--}
+decodePublicModResponse :: PduParser PublicModResponse 
+                        --Word8 -> Parser (PublicModResponse, [Word8])
+decodePublicModResponse code =
+    case code of
+      0x02 -> do 
+        (n,msg) <- wordList8
+        return (ReadDiscreteInputsResponse n msg, n:msg)
+      0x01 -> do
+        (n,msg) <- wordList8
+        return (ReadCoilsResponse n msg, n:msg)
+      0x05 -> do 
+        (addr, addr') <- anyWord16
+        (val, val') <- anyWord16
+        return (WriteSingleCoilResponse addr val, addr' ++ val')
+      0x0F -> do
+        (addr, addr') <- anyWord16
+        (cnt, cnt') <- anyWord16
+        return (WriteMultipleCoilsResponse addr cnt, addr' ++ cnt')
+      0x04 -> do
+        (n,msg16, msg8) <- wordList16
+        return (ReadInputRegisterResponse n msg16, n:msg8)
+      0x03 -> do
+        (n,msg16, msg8) <- wordList16
+        return (ReadHoldingRegistersResponse n msg16, n:msg8)
+      0x06 -> do
+        (addr, addr') <- anyWord16
+        (val, val') <- anyWord16
+        return (WriteSingleRegisterResponse addr val, addr' ++ val')
+      0x10 -> do
+        (addr, addr') <- anyWord16
+        (cnt, cnt') <- anyWord16
+        return (WriteMultipleRegistersResponse addr cnt, addr' ++ cnt')
+      fc | fc > 0x7F -> do
+        ec <- anyWord8
+        return (ExceptionResponse fc (decodeExceptionCode ec), [ec])
+      fc -> 
+        return (UnknownFunctionResponse fc, [fc])
+    where
+      wordList8 = do
+        n <- anyWord8
+        msg <- takeWord8 (fromIntegral n)
+        return (n , msg)
+      wordList16 = do
+        n <- anyWord8
+        msg <- takeWord8 (fromIntegral n)
+        return (n , pack msg, msg)
+      takeWord8 n = B.unpack `fmap` AL.take n
+
+{-- Decode the exception function codes --}
+decodeExceptionCode :: Word8 -> ExceptionCode
+decodeExceptionCode c =
+    case c of
+      0x01 -> IllegalFunction
+      0x02 -> IllegalDataAddress
+      0x03 -> IllegalDataValue
+      0x04 -> ServerDeviceFailure
+      0x05 -> Acknowledge
+      0x06 -> ServerDeviceBusy
+      0x08 -> MemoryParityError
+      0x0A -> GatewayPathUnavailible
+      0x0B -> GatewayTargetFailedToRespond
+      _    -> UnknownExceptionCode        
+
+-- | Modbus encodes words MSB first
+encodeWord16 :: Word16 -> [Word8]
+encodeWord16 w16 = [hiByte w16, loByte w16]
+
+-- | Crc is encoded LSB first
+encodeCrc16 :: Word16 -> [Word8]
+encodeCrc16 w16 = [loByte w16, hiByte w16]
+
+-- | Modbus encodes words MSB first
+anyWord16 :: Parser (Word16, [Word8])
+anyWord16 = do
+    h <- anyWord8
+    l <- anyWord8
+    return (fromIntegral h `shiftL` 8 + fromIntegral l, [h,l])
+
+-- | Crc is encoded LSB first    
+anyCrc16 :: Parser (Word16, [Word8])
+anyCrc16 = do
+    l <- anyWord8
+    h <- anyWord8
+    return ((fromIntegral h `shiftL` 8) + fromIntegral l, [h,l])
+            
 hiByte :: Word16 -> Word8
 hiByte = fromIntegral . (`shiftR` 8)
 
 loByte :: Word16 -> Word8
 loByte = fromIntegral . (.&. 0xff)
 
-upShift :: [Word8] -> Int
+-- | pack every 2 integrals in a list into a larger integral
+-- i.e. [Word8] -> [Word16] or [Word16] -> [Word32]
+pack :: (Integral a, Integral b) => [a] -> [b]
+pack = map (fromIntegral . upShift) . chunk 2
+
+upShift :: Integral a => [a] -> Int
 upShift = foldl' acc 0
   where acc a o = (a `shiftL` 8) .|. fromIntegral o
-
--- | pack a list of Word8s into a list of Word16s
-pack16 :: [Word8] -> [Word16]
-pack16 = map (fromIntegral . upShift) . chunk 2
-
--- | pack a list of Word8s into a list of Word32s
-pack32 :: [Word8] -> [Word32]
-pack32 = map (fromIntegral . upShift) . chunk 4
 
 chunk :: Int -> [a] -> [[a]]
 chunk _ [] = []
 chunk n xs = y1 : chunk n y2 where (y1,y2) = splitAt n xs
-
--- | open a socket to the given host and port
-openSocket :: HostName -> Int -> IO Socket
-openSocket host port = do
-  addrinfos <- getAddrInfo Nothing (Just host) (Just $ show port)
-  let serveraddr = head addrinfos
-  sock <- socket (addrFamily serveraddr) Stream defaultProtocol
-  timeout 500000 $ connect sock (addrAddress serveraddr)
-  return sock
-
-
--- | read a lazy bytestring from a socket with a timeout
-readSock :: Socket -> IO BL.ByteString
-readSock sock = do
-  res <- timeout 500000 $ recv sock 512
-  return $ fromMaybe BL.empty res
-
-
--- | open a socket, send a modbus query and retrieve the response
-modbusQuery :: HostName -> Int -> [Word8]
-               -> IO (Either String ModbusResponse)
-modbusQuery host port command = 
-    handle (\e -> return (Left $ show (e :: IOException))) $ do
-        sock <- openSocket host port
-        send sock (BL.pack command)
-        res <- readSock sock
-        let parsed = parseBS res >>= checkCRC >>= checkCode
-        sClose sock
-        return parsed
-  where parseBS bs = eitherResult $ parse modbusResponse bs
-  
-
--- | check ModbusResponse crc
-checkCRC :: ModbusResponse -> Either String ModbusResponse
-checkCRC p = if mCrc p == [loByte crc, hiByte crc]
-             then Right p
-             else Left "crc check failed"
-           where crc = crc16 $ mSlaveId p : mCode p : mPayload p
-
-
--- | check for error codes
-checkCode :: ModbusResponse -> Either String ModbusResponse
-checkCode p = if mCode p >= 0x80
-              then Left "modbus server returned an error"
-              else Right p
-              
-
--- | attoparsec parser for modbus response packets
-modbusResponse :: Parser ModbusResponse 
-modbusResponse = do
-    slaveId <- anyWord8
-    code    <- anyWord8
-    payload <- modbusPayload code
-    crc     <- takeWord8 2
-    return $ ModbusResponse slaveId code payload crc
-  where modbusPayload code
-          | code `elem` [1, 2, 3, 4] = do
-              n   <- anyWord8
-              msg <- takeWord8 (fromIntegral n)
-              return $ n : msg
-          | code `elem` [5, 6, 15, 16]   = takeWord8 4
-          | code == 22                   = takeWord8 6
-          | code >= 0x80 && code <= 0xff = takeWord8 1
-          | otherwise = mzero
-        takeWord8 n = B.unpack `fmap` AL.take n
