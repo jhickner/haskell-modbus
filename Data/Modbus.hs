@@ -5,6 +5,7 @@ module Data.Modbus
        , PublicModRequest (..)
        , PublicModResponse (..)
        , ExceptionCode (..)
+       , modFunction
        , retryModFunction
        , serialTransport
        , networkTransport
