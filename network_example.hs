@@ -6,7 +6,7 @@ import Network.Socket
 
 main :: IO ()
 main = do
-    sock <- openSocket "75.149.170.14" 502
+    sock <- openSocket "hostname" 502
     resp <- retryModFunction (networkTransport sock) 500000 3 req
     case resp of
       ModSuccess (AduResponse _ (ReadHoldingRegistersResponse _ x)) -> 
