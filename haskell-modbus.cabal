@@ -19,4 +19,5 @@ library
                        bytestring ==0.9.*, 
                        network ==2.3.*, 
                        attoparsec ==0.10.*, 
-                       array ==0.4.*
+                       array ==0.4.*,
+                       serialport-0.4.*

@@ -8,12 +8,12 @@ module Modbus
        , retryModFunction
        , serialTransport
        , networkTransport
+       , pack
        ) where
 
 import Prelude hiding (catch)
 import qualified Data.ByteString as B
 import qualified System.Hardware.Serialport as SP
-import Control.Concurrent
 import Data.Attoparsec
 import qualified Data.Attoparsec.Lazy as AL
 import Data.Digest.CRC16
@@ -38,10 +38,10 @@ import Data.List (foldl')
 
 -- Result of Modbus transaction
 data ModTransactionResult a = ModSuccess (AduResponse a)
-               | ModException (AduResponse a)
-               | ModTimeout
-               | ModError String
-                 deriving Show
+                            | ModException (AduResponse a)
+                            | ModTimeout
+                            | ModError String
+                              deriving Show
                           
 
 -- Datatypes for ADU
@@ -125,13 +125,11 @@ retryModFunction :: ModTransport a b
                  -> AduRequest a 
                  -> IO (ModTransactionResult b)
 retryModFunction _ _ 0 _ = return $ ModError "Maximum retries exceeded"
-retryModFunction modTransport to retries adu = do
-  r <- modFunction modTransport to adu
+retryModFunction transport to retries adu = do
+  r <- modFunction transport to adu
   case r of
     ModSuccess _ -> return r
-    _ ->
---    print $ "Error: " ++ show r
-      retryModFunction modTransport to (retries-1) adu
+    _            -> retryModFunction transport to (retries-1) adu
 
 
 {-- Generic timout function wraps a transport function
@@ -141,8 +139,8 @@ retryModFunction modTransport to retries adu = do
     ModTimeout
  --}
 modFunction :: ModTransport a b -> TimeoutUs -> AduRequest a -> IO (ModTransactionResult b)
-modFunction modTransport to adu = do
-  mRes <- timeout to $ modTransport adu
+modFunction transport to adu = do
+  mRes <- timeout to $ transport adu
   case mRes of
     Just mr -> return mr 
     Nothing -> return ModTimeout              
@@ -173,7 +171,7 @@ modTransport sendFn recvFn pduEnc pduP adu =
 --      resultParse :: Result (AduResponse a) -> IO (ModTransactionResult a)
         resultParse result =
           case result of
-            Fail{} -> return $ ModError "Error parsing responce msg"
+            Fail{} -> return $ ModError "Error parsing response msg"
             Partial p -> do
               bytes <- recvFn
               resultParse $ p bytes
@@ -212,9 +210,9 @@ serialRecv sp = do
     and appending the crc16.
 --}
 encodeADU :: (a -> [Word8]) -> AduRequest a -> [Word8]
-encodeADU encoder (AduRequest id req) = 
+encodeADU encoder (AduRequest id' req) = 
     let req' = encoder req 
-        msg = id:req' in
+        msg = id':req' in
     msg ++ encodeCrc16 (crc16 msg)
 
 {-- I think there may be a different encoding for some TCP
@@ -232,9 +230,9 @@ aduParser pduParser = do
     code <- anyWord8
     (resp, bytes) <- pduParser code
     (crc,_) <- anyCrc16
-    if crc == crc16 (slaveId:code:bytes)
-      then return $ AduResponse slaveId resp
-      else return $ AduError $ "CRC Error on Modbus response from: " ++ show slaveId
+    return $ if crc == crc16 (slaveId:code:bytes)
+      then AduResponse slaveId resp
+      else AduError $ "CRC Error on Modbus response from: " ++ show slaveId
 
 {-- Modbus spec defines public and privete function codes.
     This encoder supports a subset of the public codes.
@@ -307,7 +305,8 @@ decodePublicModResponse code =
       wordList16 = do
         n <- anyWord8
         msg <- takeWord8 (fromIntegral n)
-        return (n , pack16 msg, msg)
+        return (n , pack msg, msg)
+      takeWord8 n = B.unpack `fmap` AL.take n
 
 {-- Decode the exception function codes --}
 decodeExceptionCode :: Word8 -> ExceptionCode
@@ -346,19 +345,18 @@ anyCrc16 = do
     h <- anyWord8
     return ((fromIntegral h `shiftL` 8) + fromIntegral l, [h,l])
             
-takeWord8 n = B.unpack `fmap` AL.take n
-
 hiByte :: Word16 -> Word8
 hiByte = fromIntegral . (`shiftR` 8)
 
 loByte :: Word16 -> Word8
 loByte = fromIntegral . (.&. 0xff)
 
--- | pack a list of Word8s into a list of Word16s
-pack16 :: [Word8] -> [Word16]
-pack16 = map (fromIntegral . upShift) . chunk 2
+-- | pack every 2 integrals in a list into a larger integral
+-- i.e. [Word8] -> [Word16] or [Word16] -> [Word32]
+pack :: (Integral a, Integral b) => [a] -> [b]
+pack = map (fromIntegral . upShift) . chunk 2
 
-upShift :: [Word8] -> Int
+upShift :: Integral a => [a] -> Int
 upShift = foldl' acc 0
   where acc a o = (a `shiftL` 8) .|. fromIntegral o
 
