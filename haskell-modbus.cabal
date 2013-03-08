@@ -15,8 +15,8 @@ cabal-version:       >=1.8
 library
   exposed-modules:     Data.Modbus, Data.Digest.CRC16
   -- other-modules:       
-  build-depends:       base ==4.5.*, 
-                       bytestring ==0.9.*, 
-                       network ==2.3.*, 
-                       attoparsec ==0.10.*, 
-                       array ==0.4.*
+  build-depends:       base >= 4, 
+                       bytestring >= 0.9, 
+                       network >= 2, 
+                       attoparsec >= 0.10, 
+                       array >= 0.4
