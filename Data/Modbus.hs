@@ -145,7 +145,7 @@ instance Serialize ModResponse where
             8  -> f' WriteDiagnosticRegisterResponse
             15 -> f' WriteMultipleCoilsResponse
             16 -> f' WriteMultipleRegistersResponse
-            x | x >= 0x80 -> ExceptionResponse x <$> get
+            x | x >= 0x80 -> ExceptionResponse (x - 0x80) <$> get
             _  -> return $ UnknownFunctionResponse fn
       where
         f cons = do
