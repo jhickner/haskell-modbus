@@ -189,6 +189,7 @@ data ExceptionCode
 
 instance Serialize ExceptionCode where
     put ec = putWord8 $ case ec of
+        IllegalFunction              -> 0x01
         IllegalDataAddress           -> 0x02
         IllegalDataValue             -> 0x03
         SlaveDeviceFailure           -> 0x04
@@ -201,6 +202,7 @@ instance Serialize ExceptionCode where
     get = do
         c <- getWord8
         return $ case c of
+          0x01 -> IllegalFunction
           0x02 -> IllegalDataAddress
           0x03 -> IllegalDataValue
           0x04 -> SlaveDeviceFailure
