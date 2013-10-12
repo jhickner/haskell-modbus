@@ -3,10 +3,10 @@ module Data.Digest.CRC16
   crc16
   ) where
 
-import Data.Bits
-import Data.Word
-import Data.List (foldl')
 import Data.Array
+import Data.Bits
+import Data.List (foldl')
+import Data.Word
 
 tableList :: [Word16]
 tableList =

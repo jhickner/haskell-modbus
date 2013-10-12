@@ -1,157 +1,216 @@
-module Data.Modbus 
-  ( ModbusResponse(..)
-  , readHoldingRegisters
-  , readCoils
-  , modbusQuery
-  , pack16
-  , pack32
+module Data.Modbus
+  ( ModRequest(..)
+  , ModResponse(..)
+  , ModRequestFrame(..)
+  , ModResponseFrame(..)
+  , ExceptionCode(..)
+  , mkException
+  , matches
+  , ModRegister
+  , SlaveId
+  , FunctionCode
   ) where
 
-
-import System.Timeout
-
-import Network
-import Network.Socket hiding (send, sendTo, recv, recvFrom)
-import Network.Socket.ByteString.Lazy
-
-import Data.Digest.CRC16
-import Data.Attoparsec.Lazy as AL
-import Data.Word
-import Data.Bits
-import qualified Data.ByteString as B
-import qualified Data.ByteString.Lazy as BL
-
-import Data.List (foldl')
-
+import Control.Applicative
 import Control.Monad
-import Control.Exception (IOException, handle)
-import Data.Maybe
+import Data.ByteString (ByteString)
+import qualified Data.ByteString as B
+import Data.Digest.CRC16
+import Data.Serialize
+import Data.Word
+
+type ModRegister = Word16
+type SlaveId = Word8
+type FunctionCode = Word8
+
+data ModRequestFrame = ModRequestFrame SlaveId ModRequest deriving (Show)
+data ModResponseFrame = ModResponseFrame SlaveId ModResponse deriving (Show)
+
+instance Serialize ModRequestFrame where
+    get = getFrame ModRequestFrame
+    put (ModRequestFrame fid req) = putFrame fid req
+
+instance Serialize ModResponseFrame where
+    get = getFrame ModResponseFrame
+    put (ModResponseFrame fid req) = putFrame fid req
+
+putFrame :: Serialize a => Word8 -> a -> PutM ()
+putFrame fid req = 
+    putWord8 fid >> putByteString body >> putWord16le (crc16 packet)
+  where
+    body = encode req
+    packet = B.unpack $ B.cons fid body
+
+getFrame :: Serialize a => (Word8 -> a -> b) -> Get b
+getFrame cons = do
+    fid <- get
+    req <- get
+    crc <- getWord16le
+    when (crc /= crc' fid req) $ fail "CRC check failed"
+    return $ cons fid req
+  where
+    crc' fid req = crc16 . B.unpack . B.cons fid $ encode req
+
+-- | Check that the given response is appropriate for the given request.
+matches :: ModRequest -> ModResponse -> Bool
+matches req res = case (req, res) of
+    (ReadCoils{},                 ReadCoilsResponse{})                 -> True
+    (ReadDiscreteInputs{},        ReadDiscreteInputsResponse{})        -> True
+    (ReadHoldingRegisters _ a,    ReadHoldingRegistersResponse b _)    -> 
+        fromIntegral b == 2 * a -- 2 response bytes per point
+    (ReadInputRegisters{},        ReadInputRegistersResponse{})        -> True
+    (WriteSingleCoil a _,         WriteSingleCoilResponse b _)         -> a == b 
+    (WriteSingleRegister a _,     WriteSingleRegisterResponse b _)     -> a == b
+    (WriteDiagnosticRegister a _, WriteDiagnosticRegisterResponse b _) -> a == b
+    (WriteMultipleCoils{},        WriteMultipleCoilsResponse{})        -> True
+    (WriteMultipleRegisters{},    WriteMultipleRegistersResponse{})    -> True
+    -- TODO: should check that request fn code matches exception 
+    (_,                           ExceptionResponse{})                 -> True
+    (_,                           UnknownFunctionResponse{})           -> True
+    _                                                                  -> False
+
+data ModRequest 
+    = ReadCoils ModRegister Word16
+    | ReadDiscreteInputs ModRegister Word16
+    | ReadHoldingRegisters ModRegister Word16
+    | ReadInputRegisters ModRegister Word16
+    | WriteSingleCoil ModRegister Word16
+    | WriteSingleRegister ModRegister Word16
+    | WriteDiagnosticRegister Word16 Word16
+    | WriteMultipleCoils ModRegister Word16 Word8 ByteString
+    | WriteMultipleRegisters ModRegister Word16 Word8 ByteString
+    deriving (Show)
+
+instance Serialize ModRequest where
+    get = do 
+        fn <- getWord8
+        case fn of
+            1  -> f ReadCoils
+            2  -> f ReadDiscreteInputs
+            3  -> f ReadHoldingRegisters
+            4  -> f ReadInputRegisters
+            5  -> f WriteSingleCoil
+            6  -> f WriteSingleRegister
+            8  -> f WriteDiagnosticRegister
+            15 -> f' WriteMultipleCoils
+            16 -> f' WriteMultipleRegisters
+            _  -> fail $ "Unsupported function code: " ++ show fn
+      where
+        f cons = cons <$> getWord16be <*> getWord16be
+        f' cons = do
+            addr  <- getWord16be
+            quant <- getWord16be
+            count <- getWord8
+            body  <- getBytes (fromIntegral count)
+            return $ cons addr quant count body
+    put req = case req of
+        (ReadCoils addr cnt)                -> f 1 addr cnt
+        (ReadDiscreteInputs addr cnt)       -> f 2 addr cnt
+        (ReadHoldingRegisters addr cnt)     -> f 3 addr cnt
+        (ReadInputRegisters addr cnt)       -> f 4 addr cnt
+        (WriteSingleCoil addr cnt)          -> f 5 addr cnt
+        (WriteSingleRegister addr cnt)      -> f 6 addr cnt
+        (WriteDiagnosticRegister subfn dat) -> f 8 subfn dat
+        (WriteMultipleCoils addr qnt cnt b)      -> f' 15 addr qnt cnt b
+        (WriteMultipleRegisters addr qnt cnt b)  -> f' 16 addr qnt cnt b
+      where
+        f fn w1 w2 = putWord8 fn >> putWord16be w1 >> putWord16be w2
+        f' fn addr qnt cnt b = putWord8 fn >> putWord16be addr >>
+            putWord16be qnt >> putWord8 cnt >> putByteString b 
+
+data ModResponse 
+    = ReadCoilsResponse Word8 ByteString
+    | ReadDiscreteInputsResponse Word8 ByteString
+    | ReadHoldingRegistersResponse Word8 ByteString
+    | ReadInputRegistersResponse Word8 ByteString
+    | WriteSingleCoilResponse ModRegister Word16
+    | WriteSingleRegisterResponse ModRegister Word16
+    | WriteDiagnosticRegisterResponse Word16 Word16
+    | WriteMultipleCoilsResponse ModRegister Word16
+    | WriteMultipleRegistersResponse ModRegister Word16
+    | ExceptionResponse FunctionCode ExceptionCode
+    | UnknownFunctionResponse FunctionCode
+    deriving (Show)
+
+instance Serialize ModResponse where
+    get = do 
+        fn <- getWord8
+        case fn of
+            1  -> f ReadCoilsResponse
+            2  -> f ReadDiscreteInputsResponse
+            3  -> f ReadHoldingRegistersResponse
+            4  -> f ReadInputRegistersResponse
+            5  -> f' WriteSingleCoilResponse
+            6  -> f' WriteSingleRegisterResponse
+            8  -> f' WriteDiagnosticRegisterResponse
+            15 -> f' WriteMultipleCoilsResponse
+            16 -> f' WriteMultipleRegistersResponse
+            x | x >= 0x80 -> ExceptionResponse x <$> get
+            _  -> return $ UnknownFunctionResponse fn
+      where
+        f cons = do
+            count <- getWord8
+            body  <- getBytes (fromIntegral count)
+            return $ cons count body
+        f' cons = do
+            addr <- getWord16be
+            body <- getWord16be
+            return $ cons addr body
+    put req = case req of
+        (ReadCoilsResponse cnt b)            -> f 1 cnt b
+        (ReadDiscreteInputsResponse cnt b)   -> f 2 cnt b
+        (ReadHoldingRegistersResponse cnt b) -> f 3 cnt b
+        (ReadInputRegistersResponse cnt b)   -> f 4 cnt b
+        (WriteSingleCoilResponse addr b)     -> f' 5 addr b
+        (WriteSingleRegisterResponse addr b) -> f' 6 addr b
+        (WriteDiagnosticRegisterResponse subfn dat) -> 
+            putWord8 8 >> putWord16be subfn >> putWord16be dat
+        (WriteMultipleCoilsResponse addr b)     -> f' 15 addr b
+        (WriteMultipleRegistersResponse addr b) -> f' 16 addr b
+        (ExceptionResponse fn ec)    -> put fn >> put ec
+        (UnknownFunctionResponse fn) -> put fn
+      where
+        f fn cnt b = putWord8 fn >> putWord8 cnt >> putByteString b
+        f' fn addr b = putWord8 fn >> putWord16be addr >> putWord16be b
 
 
--- | the Modbus response from the server 
-data ModbusResponse = ModbusResponse
-    { mSlaveId :: Word8
-    , mCode    :: Word8
-    , mPayload :: [Word8]
-    , mCrc     :: [Word8]
-    } deriving Show
+data ExceptionCode 
+    = IllegalFunction
+    | IllegalDataAddress
+    | IllegalDataValue
+    | SlaveDeviceFailure
+    | Acknowledge
+    | SlaveDeviceBusy
+    | MemoryParityError
+    | GatewayPathUnavailable
+    | GatewayTargetFailedToRespond
+    | UnknownExceptionCode Word8
+    deriving Show
 
+instance Serialize ExceptionCode where
+    put ec = putWord8 $ case ec of
+        IllegalDataAddress           -> 0x02
+        IllegalDataValue             -> 0x03
+        SlaveDeviceFailure           -> 0x04
+        Acknowledge                  -> 0x05
+        SlaveDeviceBusy              -> 0x06
+        MemoryParityError            -> 0x08
+        GatewayPathUnavailable       -> 0x0A
+        GatewayTargetFailedToRespond -> 0x0B
+        (UnknownExceptionCode x)     -> x
+    get = do
+        c <- getWord8
+        return $ case c of
+          0x02 -> IllegalDataAddress
+          0x03 -> IllegalDataValue
+          0x04 -> SlaveDeviceFailure
+          0x05 -> Acknowledge
+          0x06 -> SlaveDeviceBusy
+          0x08 -> MemoryParityError
+          0x0A -> GatewayPathUnavailable
+          0x0B -> GatewayTargetFailedToRespond
+          x    -> UnknownExceptionCode x
 
--- | read holding registers
-readHoldingRegisters :: Int -> Int -> Int -> [Word8]
-readHoldingRegisters sid addr cnt =
-    addCRC [ fromIntegral sid
-           , 0x03
-           , hiByte addr'
-           , loByte addr'
-           , hiByte cnt'
-           , loByte cnt'
-           ]
-    where addr' = fromIntegral addr
-          cnt'  = fromIntegral cnt
-
-
--- | read coils
-readCoils :: Int -> Int -> Int -> [Word8]
-readCoils sid addr cnt =
-    addCRC [ fromIntegral sid
-           , 0x01
-           , hiByte addr'
-           , loByte addr'
-           , hiByte cnt'
-           , loByte cnt'
-           ]
-    where addr' = fromIntegral addr
-          cnt'  = fromIntegral cnt
-
-
--- Modbus CRC is little-endian on the wire
-addCRC :: [Word8] -> [Word8]
-addCRC msg = msg ++ [loByte crc, hiByte crc] where crc = crc16 msg
-
-hiByte :: Word16 -> Word8
-hiByte = fromIntegral . (`shiftR` 8)
-
-loByte :: Word16 -> Word8
-loByte = fromIntegral . (.&. 0xff)
-
-upShift :: [Word8] -> Int
-upShift = foldl' acc 0
-  where acc a o = (a `shiftL` 8) .|. fromIntegral o
-
--- | pack a list of Word8s into a list of Word16s
-pack16 :: [Word8] -> [Word16]
-pack16 = map (fromIntegral . upShift) . chunk 2
-
--- | pack a list of Word8s into a list of Word32s
-pack32 :: [Word8] -> [Word32]
-pack32 = map (fromIntegral . upShift) . chunk 4
-
-chunk :: Int -> [a] -> [[a]]
-chunk _ [] = []
-chunk n xs = y1 : chunk n y2 where (y1,y2) = splitAt n xs
-
--- | open a socket to the given host and port
-openSocket :: HostName -> Int -> IO Socket
-openSocket host port = do
-  addrinfos <- getAddrInfo Nothing (Just host) (Just $ show port)
-  let serveraddr = head addrinfos
-  sock <- socket (addrFamily serveraddr) Stream defaultProtocol
-  timeout 500000 $ connect sock (addrAddress serveraddr)
-  return sock
-
-
--- | read a lazy bytestring from a socket with a timeout
-readSock :: Socket -> IO BL.ByteString
-readSock sock = do
-  res <- timeout 500000 $ recv sock 512
-  return $ fromMaybe BL.empty res
-
-
--- | open a socket, send a modbus query and retrieve the response
-modbusQuery :: HostName -> Int -> [Word8]
-               -> IO (Either String ModbusResponse)
-modbusQuery host port command = 
-    handle (\e -> return (Left $ show (e :: IOException))) $ do
-        sock <- openSocket host port
-        send sock (BL.pack command)
-        res <- readSock sock
-        let parsed = parseBS res >>= checkCRC >>= checkCode
-        sClose sock
-        return parsed
-  where parseBS bs = eitherResult $ parse modbusResponse bs
-  
-
--- | check ModbusResponse crc
-checkCRC :: ModbusResponse -> Either String ModbusResponse
-checkCRC p = if mCrc p == [loByte crc, hiByte crc]
-             then Right p
-             else Left "crc check failed"
-           where crc = crc16 $ mSlaveId p : mCode p : mPayload p
-
-
--- | check for error codes
-checkCode :: ModbusResponse -> Either String ModbusResponse
-checkCode p = if mCode p >= 0x80
-              then Left "modbus server returned an error"
-              else Right p
-              
-
--- | attoparsec parser for modbus response packets
-modbusResponse :: Parser ModbusResponse 
-modbusResponse = do
-    slaveId <- anyWord8
-    code    <- anyWord8
-    payload <- modbusPayload code
-    crc     <- takeWord8 2
-    return $ ModbusResponse slaveId code payload crc
-  where modbusPayload code
-          | code `elem` [1, 2, 3, 4] = do
-              n   <- anyWord8
-              msg <- takeWord8 (fromIntegral n)
-              return $ n : msg
-          | code `elem` [5, 6, 15, 16]   = takeWord8 4
-          | code == 22                   = takeWord8 6
-          | code >= 0x80 && code <= 0xff = takeWord8 1
-          | otherwise = mzero
-        takeWord8 n = B.unpack `fmap` AL.take n
+mkException :: SlaveId -> ExceptionCode -> ByteString
+mkException slaveId t = encode $ 
+    ModResponseFrame slaveId $ ExceptionResponse 0x81 t

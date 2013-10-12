@@ -1,14 +1,14 @@
 name:                haskell-modbus
-version:             0.2
-synopsis:            A haskell implementation of the Modbus protocol
-description:         A haskell implementation of the Modbus protocol
+version:             0.3
+synopsis:            A cereal-based parser for the Modbus protocol
+description:         A cereal-based parser for the Modbus protocol
 homepage:            http://www.github.com/jhickner/haskell-modbus
 license:             BSD3
 license-file:        LICENSE
 author:              Jason Hickner
 maintainer:          jhickner@gmail.com
 -- copyright:           
-category:            Network
+category:            Data, Parsing, Network
 build-type:          Simple
 cabal-version:       >=1.8
 
@@ -17,6 +17,4 @@ library
   -- other-modules:       
   build-depends:       base >= 4, 
                        bytestring >= 0.9, 
-                       network >= 2, 
-                       attoparsec >= 0.10, 
-                       array >= 0.4
+                       cereal >=0.3 && < 0.4
