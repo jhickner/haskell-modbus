@@ -7,6 +7,7 @@ import Data.Serialize
 import Control.Applicative
 import Data.Word
 import Data.ByteString
+import Data.Either 
 main :: IO ()
 main = hspec spec
 
@@ -14,15 +15,21 @@ spec :: Spec
 spec = do
   describe "singleEncode" $ do
     it "should check serialization of requests to make sure therea aren't breaking changes" $ do
-      singlEncode`shouldBe` singleEncodeResult
+      singleEncode`shouldBe` singleEncodeResult
   describe "singleDecode" $ do 
     it "should Decode to a list of modbus requests of the same length" $ do
-       Prelude.length (singleDecode) `shouldBe` 9
+       lefts (singleDecode) `shouldBe` []
+  describe "singleEncodeResponse" $ do
+    it "should check serialization of responses to make sure therea aren't breaking changes" $ do
+      singleEncodeResponse `shouldBe` singleEncodeResponseResult
+  describe "singleResponseDecode" $ do 
+    it "should Decode to a list of modbus responses of the same length" $ do
+       lefts(singleDecodeResponse) `shouldBe` []
 
 
 -- | Generate test mod requests
-testModRequestFramesEncode :: SlaveId -> ModRegister -> Word16 -> ByteString -> [ModRequest]
-testModRequestFramesEncode sid modreg val lst = tAllRequests <*> [modreg] <*> [val] --tEncodeRequests
+testModRequestEncode :: SlaveId -> ModRegister -> Word16 -> ByteString -> [ModRequest]
+testModRequestEncode sid modreg val lst = tAllRequests <*> [modreg] <*> [val] --tEncodeRequests
     where
       tReadCoils               r v = ReadCoils                r v
       tReadDiscreteInputs      r v = ReadDiscreteInputs       r v
@@ -31,8 +38,8 @@ testModRequestFramesEncode sid modreg val lst = tAllRequests <*> [modreg] <*> [v
       tWriteSingleCoil         r v = WriteSingleCoil          r v
       tWriteSingleRegister     r v = WriteSingleRegister      r v
       tWriteDiagnosticRegister r v = WriteDiagnosticRegister  v v
-      tWriteMultipleCoils      r v = WriteMultipleCoils       r v 3 lst
-      tWriteMultipleRegisters  r v = WriteMultipleRegisters   r v 3 lst
+      tWriteMultipleCoils      r v = WriteMultipleCoils       1 0 0 "1111"
+      tWriteMultipleRegisters  r v = WriteMultipleRegisters   1 2 1 "1111"
       tAllRequests :: [ModRegister -> Word16 -> ModRequest]
       tAllRequests = [ tReadCoils               
                        ,tReadDiscreteInputs      
@@ -45,50 +52,75 @@ testModRequestFramesEncode sid modreg val lst = tAllRequests <*> [modreg] <*> [v
                        ,tWriteMultipleRegisters  
                      ]
 
+
+testOneWriteMultipleRegs = WriteMultipleRegisters   1 2 1 "1111"
+
+testDecodeOneWriteMultipleRegs :: Either String ModRequest
+testDecodeOneWriteMultipleRegs = decode . encode $ testOneWriteMultipleRegs
 -- A few static checks to make sure there haven't been changes in the way ceral encodes and decodes
-singlEncode = encode $ testModRequestFramesEncode 1 1 1 "1"
-singleEncodeResult = "\NUL\NUL\NUL\NUL\NUL\NUL\NUL\t\SOH\NUL\SOH\NUL\SOH\STX\NUL\SOH\NUL\SOH\ETX\NUL\SOH\NUL\SOH\EOT\NUL\SOH\NUL\SOH\ENQ\NUL\SOH\NUL\SOH\ACK\NUL\SOH\NUL\SOH\b\NUL\SOH\NUL\SOH\SI\NUL\SOH\NUL\SOH\ETX1\DLE\NUL\SOH\NUL\SOH\ETX1"
-
-
-
+singleEncode = encode <$> testModRequestEncode 1 1 1 "1"
+singleEncodeResult = ["\SOH\NUL\SOH\NUL\SOH","\STX\NUL\SOH\NUL\SOH","\ETX\NUL\SOH\NUL\SOH","\EOT\NUL\SOH\NUL\SOH","\ENQ\NUL\SOH\NUL\SOH","\ACK\NUL\SOH\NUL\SOH","\b\NUL\SOH\NUL\SOH","\SI\NUL\SOH\NUL\NUL\NUL1111","\DLE\NUL\SOH\NUL\STX\SOH1111"]
 -- |make sure the process works in reverse
-testModRequestFramesDecode :: ByteString -> [ModRequest] 
-testModRequestFramesDecode bs = case runGet get bs of 
-                                  Left e -> []
-                                  Right r -> r
+testModRequestDecode :: ByteString -> Either String ModRequest
+testModRequestDecode bs = runGet get bs 
 
-singleDecode = testModRequestFramesDecode singleEncodeResult 
-singleDecodeResult = testModRequestFramesEncode 1 1 1 "1"
-
-
-
+singleDecode = testModRequestDecode <$> singleEncodeResult 
 
 -- | Generate test mod responses 
-{-|
-ReadCoilsResponse                Word8         ByteString
-ReadDiscreteInputsResponse       Word8         ByteString
-ReadHoldingRegistersResponse     Word8         ByteString
-ReadInputRegistersResponse       Word8         ByteString
-WriteSingleCoilResponse          ModRegister   Word16
-WriteSingleRegisterResponse      ModRegister   Word16
-WriteDiagnosticRegisterResponse  Word16        Word16
-WriteMultipleCoilsResponse       ModRegister   Word16
-WriteMultipleRegistersResponse   ModRegister   Word16
-ExceptionResponse                FunctionCode  ExceptionCode
-UnknownFunctionResponse          FunctionCode
-|-}
+
+-- |Static 
+singleEncodeResponse = encode <$> testModResponseAllExceptions 1 1 1 1 
+singleEncodeResponseResult :: [ByteString]
+singleEncodeResponseResult = ["\SOH\SOH\SOH","\STX\SOH\SOH","\ETX\SOH\SOH","\EOT\SOH\SOH","\ENQ\NUL\SOH\NUL\SOH","\ACK\NUL\SOH\NUL\SOH","\b\NUL\SOH\NUL\SOH","\SI\NUL\SOH\NUL\SOH","\DLE\NUL\SOH\NUL\SOH","\129\SOH","\SOH","\SOH\SOH\SOH","\STX\SOH\SOH","\ETX\SOH\SOH","\EOT\SOH\SOH","\ENQ\NUL\SOH\NUL\SOH","\ACK\NUL\SOH\NUL\SOH","\b\NUL\SOH\NUL\SOH","\SI\NUL\SOH\NUL\SOH","\DLE\NUL\SOH\NUL\SOH","\129\STX","\SOH","\SOH\SOH\SOH","\STX\SOH\SOH","\ETX\SOH\SOH","\EOT\SOH\SOH","\ENQ\NUL\SOH\NUL\SOH","\ACK\NUL\SOH\NUL\SOH","\b\NUL\SOH\NUL\SOH","\SI\NUL\SOH\NUL\SOH","\DLE\NUL\SOH\NUL\SOH","\129\ETX","\SOH","\SOH\SOH\SOH","\STX\SOH\SOH","\ETX\SOH\SOH","\EOT\SOH\SOH","\ENQ\NUL\SOH\NUL\SOH","\ACK\NUL\SOH\NUL\SOH","\b\NUL\SOH\NUL\SOH","\SI\NUL\SOH\NUL\SOH","\DLE\NUL\SOH\NUL\SOH","\129\EOT","\SOH","\SOH\SOH\SOH","\STX\SOH\SOH","\ETX\SOH\SOH","\EOT\SOH\SOH","\ENQ\NUL\SOH\NUL\SOH","\ACK\NUL\SOH\NUL\SOH","\b\NUL\SOH\NUL\SOH","\SI\NUL\SOH\NUL\SOH","\DLE\NUL\SOH\NUL\SOH","\129\ENQ","\SOH","\SOH\SOH\SOH","\STX\SOH\SOH","\ETX\SOH\SOH","\EOT\SOH\SOH","\ENQ\NUL\SOH\NUL\SOH","\ACK\NUL\SOH\NUL\SOH","\b\NUL\SOH\NUL\SOH","\SI\NUL\SOH\NUL\SOH","\DLE\NUL\SOH\NUL\SOH","\129\ACK","\SOH","\SOH\SOH\SOH","\STX\SOH\SOH","\ETX\SOH\SOH","\EOT\SOH\SOH","\ENQ\NUL\SOH\NUL\SOH","\ACK\NUL\SOH\NUL\SOH","\b\NUL\SOH\NUL\SOH","\SI\NUL\SOH\NUL\SOH","\DLE\NUL\SOH\NUL\SOH","\129\b","\SOH","\SOH\SOH\SOH","\STX\SOH\SOH","\ETX\SOH\SOH","\EOT\SOH\SOH","\ENQ\NUL\SOH\NUL\SOH","\ACK\NUL\SOH\NUL\SOH","\b\NUL\SOH\NUL\SOH","\SI\NUL\SOH\NUL\SOH","\DLE\NUL\SOH\NUL\SOH","\129\n","\SOH","\SOH\SOH\SOH","\STX\SOH\SOH","\ETX\SOH\SOH","\EOT\SOH\SOH","\ENQ\NUL\SOH\NUL\SOH","\ACK\NUL\SOH\NUL\SOH","\b\NUL\SOH\NUL\SOH","\SI\NUL\SOH\NUL\SOH","\DLE\NUL\SOH\NUL\SOH","\129\v","\SOH","\SOH\SOH\SOH","\STX\SOH\SOH","\ETX\SOH\SOH","\EOT\SOH\SOH","\ENQ\NUL\SOH\NUL\SOH","\ACK\NUL\SOH\NUL\SOH","\b\NUL\SOH\NUL\SOH","\SI\NUL\SOH\NUL\SOH","\DLE\NUL\SOH\NUL\SOH","\129\SOH","\SOH"]
+
+singleDecodeResponse = testModResponseDecode <$> singleEncodeResponseResult 
+
+testModResponseEncode :: SlaveId -> Word8  -> Word16-> FunctionCode -> ExceptionCode -> [ModResponse]
+testModResponseEncode sid adr  wd fc ec = tAllResponses <*> [adr] <*> [wd]
+    where
+      tReadCoilsResponse               r v =  ReadCoilsResponse            r (pack [r])
+      tReadDiscreteInputsResponse      r v =  ReadDiscreteInputsResponse   r (pack [r])
+      tReadHoldingRegistersResponse    r v =  ReadHoldingRegistersResponse r (pack [r])
+      tReadInputRegistersResponse      r v =  ReadInputRegistersResponse   r (pack [r])    
+      tWriteSingleCoilResponse         r v =  WriteSingleCoilResponse      v v 
+      tWriteSingleRegisterResponse     r v =  WriteSingleRegisterResponse  v v    
+      tWriteDiagnosticRegisterResponse r v =  WriteDiagnosticRegisterResponse v v
+      tWriteMultipleCoilsResponse      r v =  WriteMultipleCoilsResponse v v    
+      tWriteMultipleRegistersResponse  r v =  WriteMultipleRegistersResponse v v   
+      tExceptionResponse               r v =  ExceptionResponse  fc ec              
+--      tUnknownFunctionResponse         r v =  UnknownFunctionResponse 0xFF 
+      tAllResponses :: [Word8 -> Word16 -> ModResponse]
+      tAllResponses = [tReadCoilsResponse               
+                      , tReadDiscreteInputsResponse      
+                      , tReadHoldingRegistersResponse    
+                      , tReadInputRegistersResponse      
+                      , tWriteSingleCoilResponse         
+                      , tWriteSingleRegisterResponse     
+                      , tWriteDiagnosticRegisterResponse 
+                      , tWriteMultipleCoilsResponse      
+                      , tWriteMultipleRegistersResponse  
+                      , tExceptionResponse ]              
+--                      , tUnknownFunctionResponse ]
 
 
 
+testModResponseDecode :: ByteString -> Either String ModResponse
+testModResponseDecode bs = runGet get bs
 
-tReadCoilsResponse               r v =  ReadCoilsResponse                
-tReadDiscreteInputsResponse      r v =  ReadDiscreteInputsResponse       
-tReadHoldingRegistersResponse    r v =  ReadHoldingRegistersResponse     
-tReadInputRegistersResponse      r v =  ReadInputRegistersResponse       
-tWriteSingleCoilResponse         r v =  WriteSingleCoilResponse          
-tWriteSingleRegisterResponse     r v =  WriteSingleRegisterResponse      
-tWriteDiagnosticRegisterResponse r v =  WriteDiagnosticRegisterResponse  
-tWriteMultipleCoilsResponse      r v =  WriteMultipleCoilsResponse       
-tWriteMultipleRegistersResponse  r v =  WriteMultipleRegistersResponse   
-tExceptionResponse               r v =  ExceptionResponse                
-tUnknownFunctionResponse         r v =  UnknownFunctionResponse          
+testModResponseAllExceptions :: SlaveId -> Word8 -> Word16 -> FunctionCode -> [ModResponse]
+testModResponseAllExceptions sid adr wd fc = Prelude.concat $ (testModResponseEncode sid adr wd fc) <$> ecs 
+    where
+      ecs :: [ExceptionCode]
+      ecs =  [IllegalFunction
+           , IllegalDataAddress
+           , IllegalDataValue
+           , SlaveDeviceFailure
+           , Acknowledge
+           , SlaveDeviceBusy
+           , MemoryParityError
+           , GatewayPathUnavailable
+           , GatewayTargetFailedToRespond
+           , UnknownExceptionCode 0xFF]
+
+testDecodeUnknownExceptionCode :: Either String ExceptionCode
+testDecodeUnknownExceptionCode = decode.encode . UnknownExceptionCode $ 0xFF

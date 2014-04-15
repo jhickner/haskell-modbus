@@ -71,6 +71,7 @@ matches req res = case (req, res) of
     (_,                           UnknownFunctionResponse{})           -> True
     _                                                                  -> False
 
+
 data ModRequest 
     = ReadCoils ModRegister Word16
     | ReadDiscreteInputs ModRegister Word16

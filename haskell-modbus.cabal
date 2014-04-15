@@ -22,3 +22,16 @@ library
                        array >= 0.4,
                        bytestring >= 0.9,
                        cereal >=0.3
+
+test-suite spec 
+  Type:                exitcode-stdio-1.0
+  Default-Language:    Haskell2010
+  Hs-Source-Dirs:      test
+  Ghc-Options:         -Wall
+  Main-Is:             Spec.hs
+  Build-Depends:        base
+                      , hspec
+                      , haskell-modbus
+                      , cereal 
+                      , bytestring
+                      , array
