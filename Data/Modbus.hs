@@ -23,8 +23,14 @@ type ModRegister = Word16
 type SlaveId = Word8
 type FunctionCode = Word8
 
-data ModRequestFrame = ModRequestFrame SlaveId ModRequest deriving (Show)
-data ModResponseFrame = ModResponseFrame SlaveId ModResponse deriving (Show)
+-- | Record naming scheme
+-- | q -> for request
+-- | r for response 
+
+-- | modR -> mod register 
+
+data ModRequestFrame = ModRequestFrame { qSlaveId ::SlaveId , qModRequest :: ModRequest} deriving (Show)
+data ModResponseFrame = ModResponseFrame {rSlaveId :: SlaveId, qModResponse ::ModResponse} deriving (Show)
 
 instance Serialize ModRequestFrame where
     get = getFrame ModRequestFrame
@@ -73,15 +79,15 @@ matches req res = case (req, res) of
 
 
 data ModRequest 
-    = ReadCoils ModRegister Word16
-    | ReadDiscreteInputs ModRegister Word16
-    | ReadHoldingRegisters ModRegister Word16
-    | ReadInputRegisters ModRegister Word16
-    | WriteSingleCoil ModRegister Word16
-    | WriteSingleRegister ModRegister Word16
-    | WriteDiagnosticRegister Word16 Word16
-    | WriteMultipleCoils ModRegister Word16 Word8 ByteString
-    | WriteMultipleRegisters ModRegister Word16 Word8 ByteString
+    = ReadCoils { readCoilsModReg :: ModRegister, readCoilsCnt:: Word16}
+    | ReadDiscreteInputs {readDiscreteInputsModReg :: ModRegister, readDiscreteInputsCnt::Word16}
+    | ReadHoldingRegisters{readHoldingRegistersModReg::ModRegister, readHoldingRegistersCnt :: Word16}
+    | ReadInputRegisters {readInputRegistersModReg :: ModRegister , readInputRegistersCnt :: Word16 }
+    | WriteSingleCoil {writeSingleCoilModReg::ModRegister,  writeSingleCoilCnt :: Word16}
+    | WriteSingleRegister {writeSingleRegisterModReg :: ModRegister , writeSingleRegister::Word16}
+    | WriteDiagnosticRegister {writeDiagnosticRegisterSubFcn :: Word16, writeDiagnosticRegisterDat :: Word16 }
+    | WriteMultipleCoils {writeMultipleCoilsModReg::ModRegister , writeMultipleCoilsQty :: Word16, writeMultipleCoilsCnt:: Word8, qWriteMultipleCoilsVal:: ByteString}
+    | WriteMultipleRegisters {writeMultipleRegistersModReg ::ModRegister, writeMultipleRegistersQty:: Word16, writeMultipleRegistersCnt ::Word8 , writeMultipleRegistersVal:: ByteString}
     deriving (Show)
 
 instance Serialize ModRequest where
@@ -121,16 +127,18 @@ instance Serialize ModRequest where
         f' fn addr qnt cnt b = putWord8 fn >> putWord16be addr >>
             putWord16be qnt >> putWord8 cnt >> putByteString b 
 
+
+
 data ModResponse 
-    = ReadCoilsResponse Word8 ByteString
-    | ReadDiscreteInputsResponse Word8 ByteString
-    | ReadHoldingRegistersResponse Word8 ByteString
-    | ReadInputRegistersResponse Word8 ByteString
-    | WriteSingleCoilResponse ModRegister Word16
-    | WriteSingleRegisterResponse ModRegister Word16
-    | WriteDiagnosticRegisterResponse Word16 Word16
-    | WriteMultipleCoilsResponse ModRegister Word16
-    | WriteMultipleRegistersResponse ModRegister Word16
+    = ReadCoilsResponse {readCoilsResponseCnt ::Word8, readCoilsResponseVal ::ByteString}
+    | ReadDiscreteInputsResponse {readDiscreteInputsResponseCnt :: Word8, readDiscreteInputsResponseVal:: ByteString}
+    | ReadHoldingRegistersResponse {readHoldingRegistersResponseCnt:: Word8 ,readHoldingRegistersResponseVal::ByteString}
+    | ReadInputRegistersResponse {readInputRegistersResponseAddr :: Word8, readInputRegistersResponseVal:: ByteString}
+    | WriteSingleCoilResponse {writeSingleCoilResponseModReg:: ModRegister,  writeSingleCoilResponseVal ::Word16}
+    | WriteSingleRegisterResponse {writeSingleRegisterResponseModReg ::ModRegister, writeSingleRegisterResponseVal ::Word16}
+    | WriteDiagnosticRegisterResponse {writeDiagnosticRegisterResponseSubFcn :: Word16, writeDiagnosticRegisterResponseDat:: Word16}
+    | WriteMultipleCoilsResponse {writeMultipleCoilsResponseModReg ::ModRegister, writeMultipleCoilsResponseVal:: Word16}
+    | WriteMultipleRegistersResponse {writeMultipleRegistersResponseModReg::ModRegister, writeMultipleRegistersResponseVal :: Word16}
     | ExceptionResponse FunctionCode ExceptionCode
     | UnknownFunctionResponse FunctionCode
     deriving (Show)
@@ -189,7 +197,7 @@ data ExceptionCode
     | MemoryParityError
     | GatewayPathUnavailable
     | GatewayTargetFailedToRespond
-    | UnknownExceptionCode Word8
+    | UnknownExceptionCode {getUnknownException ::Word8}
     deriving Show
 
 instance Serialize ExceptionCode where
