@@ -51,6 +51,8 @@ getFrame cons = do
   where
     crc' fid req = crc16 . B.unpack . B.cons fid $ encode req
 
+-- Frame Response has to be split out for encoding problems                   
+
 -- | Check that the given response is appropriate for the given request.
 matches :: ModRequest -> ModResponse -> Bool
 matches req res = case (req, res) of
@@ -167,7 +169,9 @@ instance Serialize ModResponse where
             putWord8 8 >> putWord16be subfn >> putWord16be dat
         (WriteMultipleCoilsResponse addr b)     -> f' 15 addr b
         (WriteMultipleRegistersResponse addr b) -> f' 16 addr b
-        (ExceptionResponse fn ec)    -> put fn >> put ec
+        (ExceptionResponse fn ec)
+                       |fn >= 0x80    -> put fn >> put ec
+                       |otherwise     -> put (fn + 0x80) >> put ec
         (UnknownFunctionResponse fn) -> put fn
       where
         f fn cnt b = putWord8 fn >> putWord8 cnt >> putByteString b

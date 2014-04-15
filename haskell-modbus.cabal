@@ -1,5 +1,7 @@
+
+-- Plow version
 name:                haskell-modbus
-version:             0.3.1
+version:             0.3.1.7569 
 synopsis:            A cereal-based parser for the Modbus protocol
 description:         A cereal-based parser for the Modbus protocol
 homepage:            http://www.github.com/jhickner/haskell-modbus
