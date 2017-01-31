@@ -1,5 +1,5 @@
-module Data.Digest.CRC16 
-  ( 
+module Data.Digest.CRC16
+  (
   crc16
   ) where
 
@@ -48,8 +48,6 @@ table = listArray (0,255) tableList
 
 -- | crc16 calculation
 crc16 :: [Word8] -> Word16
-crc16 = foldl' f 0xFFFF 
-  where f ac v = (ac `shiftR` 8) `xor` (table ! idx) 
+crc16 = foldl' f 0xFFFF
+  where f ac v = (ac `shiftR` 8) `xor` (table ! idx)
           where idx = (fromIntegral v `xor` ac) .&. 0xFF
-
-
