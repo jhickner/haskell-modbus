@@ -7,6 +7,7 @@ module Data.Modbus
   , FunctionCode
   ) where
 
+import Control.Monad
 import Data.ByteString (ByteString)
 import Data.Serialize
 import Data.Word
@@ -41,7 +42,7 @@ data ModRequest
     | WriteSingleRegister {writeSingleRegisterModReg :: ModRegister, writeSingleRegister :: Word16}
     | WriteDiagnosticRegister {writeDiagnosticRegisterSubFcn :: Word16, writeDiagnosticRegisterDat :: Word16}
     | WriteMultipleCoils {writeMultipleCoilsModReg :: ModRegister, writeMultipleCoilsQty :: Word16, writeMultipleCoilsCnt :: Word8, qWriteMultipleCoilsVal :: ByteString}
-    | WriteMultipleRegisters {writeMultipleRegistersModReg :: ModRegister, writeMultipleRegistersQty :: Word16, writeMultipleRegistersCnt :: Word8, writeMultipleRegistersVal :: ByteString}
+    | WriteMultipleRegisters {writeMultipleRegistersModReg :: ModRegister, writeMultipleRegistersVal :: [Word16]}
     deriving (Show)
 
 instance Serialize ModRequest where
@@ -56,7 +57,7 @@ instance Serialize ModRequest where
             6  -> f WriteSingleRegister
             8  -> f WriteDiagnosticRegister
             15 -> f' WriteMultipleCoils
-            16 -> f' WriteMultipleRegisters
+            16 -> f''
             _  -> fail $ "Unsupported function code: " ++ show fn
       where
         f cons = cons <$> getWord16be <*> getWord16be
@@ -66,6 +67,14 @@ instance Serialize ModRequest where
             count <- getWord8
             body  <- getBytes (fromIntegral count)
             return $ cons addr quant count body
+
+        f'' = do
+            addr  <- getWord16be
+            quant <- getWord16be
+            _ <- getWord8
+            vals  <- replicateM (fromIntegral quant) getWord16be
+            return $ WriteMultipleRegisters addr vals
+
     put req = case req of
         (ReadCoils addr cnt)                -> f 1 addr cnt
         (ReadDiscreteInputs addr cnt)       -> f 2 addr cnt
@@ -75,11 +84,18 @@ instance Serialize ModRequest where
         (WriteSingleRegister addr cnt)      -> f 6 addr cnt
         (WriteDiagnosticRegister subfn dat) -> f 8 subfn dat
         (WriteMultipleCoils addr qnt cnt b)      -> f' 15 addr qnt cnt b
-        (WriteMultipleRegisters addr qnt cnt b)  -> f' 16 addr qnt cnt b
+        (WriteMultipleRegisters addr vals)  -> f'' 16 addr vals
       where
         f fn w1 w2 = putWord8 fn >> putWord16be w1 >> putWord16be w2
         f' fn addr qnt cnt b = putWord8 fn >> putWord16be addr >>
             putWord16be qnt >> putWord8 cnt >> putByteString b
+
+        f'' fn addr vals = do
+          putWord8 fn
+          putWord16be addr
+          putWord16be (fromIntegral $ length vals)
+          putWord8 (fromIntegral $ 2 * length vals)
+          mapM_ putWord16be vals
 
 
 
