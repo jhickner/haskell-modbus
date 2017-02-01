@@ -1,5 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
-module Data.ModbusSpec (main, spec) where
+module Data.ModbusSpec (spec) where
 
 import Test.Hspec
 import Data.Modbus
@@ -7,8 +7,6 @@ import Data.Serialize
 import Data.Word
 import Data.ByteString
 import Data.Either
-main :: IO ()
-main = hspec spec
 
 spec :: Spec
 spec = do
