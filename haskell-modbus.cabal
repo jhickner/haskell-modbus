@@ -17,6 +17,7 @@ library
   ghc-options: -Wall
   build-depends:       base >= 4 && < 5,
                        array >= 0.4,
+                       bitwise == 0.1.*,
                        bytestring >= 0.9,
                        cereal >=0.3
 

@@ -3,7 +3,8 @@ resolver: lts-7.18
 packages:
   - '.'
 
-extra-deps: []
+extra-deps:
+  - bitwise-0.1.1.1
 
 flags: {}
 

@@ -8,6 +8,8 @@ module Data.Modbus
   ) where
 
 import Control.Monad
+import Data.Array.BitArray
+import Data.Array.BitArray.ByteString
 import Data.ByteString (ByteString)
 import Data.Serialize
 import Data.Word
@@ -41,7 +43,7 @@ data ModRequest
     | WriteSingleCoil {writeSingleCoilModReg :: ModRegister, writeSingleCoilCnt :: Word16}
     | WriteSingleRegister {writeSingleRegisterModReg :: ModRegister, writeSingleRegister :: Word16}
     | WriteDiagnosticRegister {writeDiagnosticRegisterSubFcn :: Word16, writeDiagnosticRegisterDat :: Word16}
-    | WriteMultipleCoils {writeMultipleCoilsModReg :: ModRegister, writeMultipleCoilsQty :: Word16, writeMultipleCoilsCnt :: Word8, qWriteMultipleCoilsVal :: ByteString}
+    | WriteMultipleCoils {writeMultipleCoilsModReg :: ModRegister, qWriteMultipleCoilsVal :: [Bool]}
     | WriteMultipleRegisters {writeMultipleRegistersModReg :: ModRegister, writeMultipleRegistersVal :: [Word16]}
     deriving (Show)
 
@@ -56,17 +58,19 @@ instance Serialize ModRequest where
             5  -> f WriteSingleCoil
             6  -> f WriteSingleRegister
             8  -> f WriteDiagnosticRegister
-            15 -> f' WriteMultipleCoils
+            15 -> f'
             16 -> f''
             _  -> fail $ "Unsupported function code: " ++ show fn
       where
         f cons = cons <$> getWord16be <*> getWord16be
-        f' cons = do
-            addr  <- getWord16be
-            quant <- getWord16be
-            count <- getWord8
-            body  <- getBytes (fromIntegral count)
-            return $ cons addr quant count body
+
+        f' = do
+          addr  <- getWord16be
+          quant <- getWord16be
+          count <- getWord8
+          body  <- getBytes (fromIntegral count)
+          let a = fromByteString (0 :: Int, fromIntegral quant - 1) body
+          return $ WriteMultipleCoils addr (elems a)
 
         f'' = do
             addr  <- getWord16be
@@ -83,12 +87,18 @@ instance Serialize ModRequest where
         (WriteSingleCoil addr cnt)          -> f 5 addr cnt
         (WriteSingleRegister addr cnt)      -> f 6 addr cnt
         (WriteDiagnosticRegister subfn dat) -> f 8 subfn dat
-        (WriteMultipleCoils addr qnt cnt b)      -> f' 15 addr qnt cnt b
+        (WriteMultipleCoils addr vals)      -> f' 15 addr vals
         (WriteMultipleRegisters addr vals)  -> f'' 16 addr vals
       where
         f fn w1 w2 = putWord8 fn >> putWord16be w1 >> putWord16be w2
-        f' fn addr qnt cnt b = putWord8 fn >> putWord16be addr >>
-            putWord16be qnt >> putWord8 cnt >> putByteString b
+
+        f' fn addr vals = do
+          putWord8 fn
+          putWord16be addr
+          putWord16be (fromIntegral $ length vals)
+          putWord8 (fromIntegral $ (7 + length vals) `div` 8)
+          let a = listArray (0, length vals) vals
+          putByteString $ toByteString a
 
         f'' fn addr vals = do
           putWord8 fn

@@ -32,7 +32,7 @@ testModRequestEncode modreg val _lst = tAllRequests <*> [modreg] <*> [val]
                    , WriteSingleCoil
                    , WriteSingleRegister
                    , \ _ v -> WriteDiagnosticRegister v v
-                   , \ _ _ -> WriteMultipleCoils 1 0 0 (pack $ Prelude.replicate 4 49)
+                   , \ _ _ -> WriteMultipleCoils 0 [False, False, True]
                    , \ _ _ -> WriteMultipleRegisters 0 [0x1234, 0x3412]
                    ]
 
@@ -47,7 +47,7 @@ singleEncodeResult = pack <$> [ [1,0,1,0,1]
                               , [5,0,1,0,1]
                               , [6,0,1,0,1]
                               , [8,0,1,0,1]
-                              , [15,0,1,0,0,0,49,49,49,49]
+                              , [15,0,0,0,3,1,4]
                               , [16,0,0,0,2,4,18,52, 52, 18]
                               ]
 
