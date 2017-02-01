@@ -1,56 +1,18 @@
 module Data.Modbus
   ( ModRequest(..)
   , ModResponse(..)
-  , ModRequestFrame(..)
-  , ModResponseFrame(..)
   , ExceptionCode(..)
-  , mkException
   , matches
   , ModRegister
-  , SlaveId
   , FunctionCode
   ) where
 
-import Control.Monad
 import Data.ByteString (ByteString)
-import qualified Data.ByteString as B
-import Data.Digest.CRC16
 import Data.Serialize
 import Data.Word
 
 type ModRegister = Word16
-type SlaveId = Word8
 type FunctionCode = Word8
-
-data ModRequestFrame = ModRequestFrame { qSlaveId :: SlaveId, qModRequest :: ModRequest} deriving (Show)
-data ModResponseFrame = ModResponseFrame { rSlaveId :: SlaveId, rModResponse :: ModResponse} deriving (Show)
-
-instance Serialize ModRequestFrame where
-    get = getFrame ModRequestFrame
-    put (ModRequestFrame fid req) = putFrame fid req
-
-instance Serialize ModResponseFrame where
-    get = getFrame ModResponseFrame
-    put (ModResponseFrame fid req) = putFrame fid req
-
-putFrame :: Serialize a => Word8 -> a -> PutM ()
-putFrame fid req =
-    putWord8 fid >> putByteString body >> putWord16le (crc16 packet)
-  where
-    body = encode req
-    packet = B.unpack $ B.cons fid body
-
-getFrame :: Serialize a => (Word8 -> a -> b) -> Get b
-getFrame cons = do
-    fid <- get
-    req <- get
-    crc <- getWord16le
-    when (crc /= crc' fid req) $ fail "CRC check failed"
-    return $ cons fid req
-  where
-    crc' fid req = crc16 . B.unpack . B.cons fid $ encode req
-
--- Frame Response has to be split out for encoding problems
 
 -- | Check that the given response is appropriate for the given request.
 matches :: ModRequest -> ModResponse -> Bool
@@ -217,7 +179,3 @@ instance Serialize ExceptionCode where
           0x0A -> GatewayPathUnavailable
           0x0B -> GatewayTargetFailedToRespond
           x    -> UnknownExceptionCode x
-
-mkException :: SlaveId -> ExceptionCode -> ByteString
-mkException slaveId t = encode $
-    ModResponseFrame slaveId $ ExceptionResponse 0x81 t

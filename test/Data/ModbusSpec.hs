@@ -22,8 +22,8 @@ spec = do
     it "should Decode to a list of modbus responses of the same length" $
     lefts singleDecodeResponse `shouldBe` []
 
-testModRequestEncode :: SlaveId -> ModRegister -> Word16 -> ByteString -> [ModRequest]
-testModRequestEncode _sid modreg val _lst = tAllRequests <*> [modreg] <*> [val]
+testModRequestEncode :: ModRegister -> Word16 -> ByteString -> [ModRequest]
+testModRequestEncode modreg val _lst = tAllRequests <*> [modreg] <*> [val]
   where
     tAllRequests = [ ReadCoils
                    , ReadDiscreteInputs
@@ -37,7 +37,7 @@ testModRequestEncode _sid modreg val _lst = tAllRequests <*> [modreg] <*> [val]
                    ]
 
 singleEncode :: [ByteString]
-singleEncode = encode <$> testModRequestEncode 1 1 1 (pack [49])
+singleEncode = encode <$> testModRequestEncode 1 1 (pack [49])
 
 singleEncodeResult :: [ByteString]
 singleEncodeResult = pack <$> [ [1,0,1,0,1]
@@ -55,7 +55,7 @@ singleDecode :: [Either String ModRequest]
 singleDecode = decode <$> singleEncodeResult
 
 singleEncodeResponse :: [ByteString]
-singleEncodeResponse = encode <$> testModResponseAllFuncs 1 1 1 ++ testModResponseAllExceptions 1
+singleEncodeResponse = encode <$> testModResponseAllFuncs 1 1 ++ testModResponseAllExceptions 1
 
 singleEncodeResponseResult :: [ByteString]
 singleEncodeResponseResult = fmap pack [ [1,1,1]
@@ -82,8 +82,8 @@ singleEncodeResponseResult = fmap pack [ [1,1,1]
 singleDecodeResponse :: [Either String ModResponse]
 singleDecodeResponse = decode <$> singleEncodeResponseResult
 
-testModResponseAllFuncs :: SlaveId -> Word8  -> Word16-> [ModResponse]
-testModResponseAllFuncs _sid adr  wd = tAllResponses <*> [adr] <*> [wd]
+testModResponseAllFuncs :: Word8  -> Word16-> [ModResponse]
+testModResponseAllFuncs adr  wd = tAllResponses <*> [adr] <*> [wd]
     where
       tAllResponses = [ \ r _ -> ReadCoilsResponse r (pack [r])
                       , \ r _ -> ReadDiscreteInputsResponse r (pack [r])
