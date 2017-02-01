@@ -11,7 +11,6 @@ module Data.Modbus
   , FunctionCode
   ) where
 
-import Control.Applicative
 import Control.Monad
 import Data.ByteString (ByteString)
 import qualified Data.ByteString as B
@@ -23,14 +22,8 @@ type ModRegister = Word16
 type SlaveId = Word8
 type FunctionCode = Word8
 
--- | Record naming scheme
--- | q -> for request
--- | r for response 
-
--- | modR -> mod register 
-
-data ModRequestFrame = ModRequestFrame { qSlaveId ::SlaveId , qModRequest :: ModRequest} deriving (Show)
-data ModResponseFrame = ModResponseFrame {rSlaveId :: SlaveId, qModResponse ::ModResponse} deriving (Show)
+data ModRequestFrame = ModRequestFrame { qSlaveId :: SlaveId, qModRequest :: ModRequest} deriving (Show)
+data ModResponseFrame = ModResponseFrame { rSlaveId :: SlaveId, rModResponse :: ModResponse} deriving (Show)
 
 instance Serialize ModRequestFrame where
     get = getFrame ModRequestFrame
@@ -41,7 +34,7 @@ instance Serialize ModResponseFrame where
     put (ModResponseFrame fid req) = putFrame fid req
 
 putFrame :: Serialize a => Word8 -> a -> PutM ()
-putFrame fid req = 
+putFrame fid req =
     putWord8 fid >> putByteString body >> putWord16le (crc16 packet)
   where
     body = encode req
@@ -57,41 +50,40 @@ getFrame cons = do
   where
     crc' fid req = crc16 . B.unpack . B.cons fid $ encode req
 
--- Frame Response has to be split out for encoding problems                   
+-- Frame Response has to be split out for encoding problems
 
 -- | Check that the given response is appropriate for the given request.
 matches :: ModRequest -> ModResponse -> Bool
 matches req res = case (req, res) of
     (ReadCoils{},                 ReadCoilsResponse{})                 -> True
     (ReadDiscreteInputs{},        ReadDiscreteInputsResponse{})        -> True
-    (ReadHoldingRegisters _ a,    ReadHoldingRegistersResponse b _)    -> 
+    (ReadHoldingRegisters _ a,    ReadHoldingRegistersResponse b _)    ->
         fromIntegral b == 2 * a -- 2 response bytes per point
     (ReadInputRegisters{},        ReadInputRegistersResponse{})        -> True
-    (WriteSingleCoil a _,         WriteSingleCoilResponse b _)         -> a == b 
+    (WriteSingleCoil a _,         WriteSingleCoilResponse b _)         -> a == b
     (WriteSingleRegister a _,     WriteSingleRegisterResponse b _)     -> a == b
     (WriteDiagnosticRegister a _, WriteDiagnosticRegisterResponse b _) -> a == b
     (WriteMultipleCoils{},        WriteMultipleCoilsResponse{})        -> True
     (WriteMultipleRegisters{},    WriteMultipleRegistersResponse{})    -> True
-    -- TODO: should check that request fn code matches exception 
+    -- TODO: should check that request fn code matches exception
     (_,                           ExceptionResponse{})                 -> True
     (_,                           UnknownFunctionResponse{})           -> True
     _                                                                  -> False
 
-
-data ModRequest 
-    = ReadCoils { readCoilsModReg :: ModRegister, readCoilsCnt:: Word16}
-    | ReadDiscreteInputs {readDiscreteInputsModReg :: ModRegister, readDiscreteInputsCnt::Word16}
-    | ReadHoldingRegisters{readHoldingRegistersModReg::ModRegister, readHoldingRegistersCnt :: Word16}
-    | ReadInputRegisters {readInputRegistersModReg :: ModRegister , readInputRegistersCnt :: Word16 }
-    | WriteSingleCoil {writeSingleCoilModReg::ModRegister,  writeSingleCoilCnt :: Word16}
-    | WriteSingleRegister {writeSingleRegisterModReg :: ModRegister , writeSingleRegister::Word16}
-    | WriteDiagnosticRegister {writeDiagnosticRegisterSubFcn :: Word16, writeDiagnosticRegisterDat :: Word16 }
-    | WriteMultipleCoils {writeMultipleCoilsModReg::ModRegister , writeMultipleCoilsQty :: Word16, writeMultipleCoilsCnt:: Word8, qWriteMultipleCoilsVal:: ByteString}
-    | WriteMultipleRegisters {writeMultipleRegistersModReg ::ModRegister, writeMultipleRegistersQty:: Word16, writeMultipleRegistersCnt ::Word8 , writeMultipleRegistersVal:: ByteString}
+data ModRequest
+    = ReadCoils {readCoilsModReg :: ModRegister, readCoilsCnt :: Word16}
+    | ReadDiscreteInputs {readDiscreteInputsModReg :: ModRegister, readDiscreteInputsCnt :: Word16}
+    | ReadHoldingRegisters {readHoldingRegistersModReg :: ModRegister, readHoldingRegistersCnt :: Word16}
+    | ReadInputRegisters {readInputRegistersModReg :: ModRegister, readInputRegistersCnt :: Word16}
+    | WriteSingleCoil {writeSingleCoilModReg :: ModRegister, writeSingleCoilCnt :: Word16}
+    | WriteSingleRegister {writeSingleRegisterModReg :: ModRegister, writeSingleRegister :: Word16}
+    | WriteDiagnosticRegister {writeDiagnosticRegisterSubFcn :: Word16, writeDiagnosticRegisterDat :: Word16}
+    | WriteMultipleCoils {writeMultipleCoilsModReg :: ModRegister, writeMultipleCoilsQty :: Word16, writeMultipleCoilsCnt :: Word8, qWriteMultipleCoilsVal :: ByteString}
+    | WriteMultipleRegisters {writeMultipleRegistersModReg :: ModRegister, writeMultipleRegistersQty :: Word16, writeMultipleRegistersCnt :: Word8, writeMultipleRegistersVal :: ByteString}
     deriving (Show)
 
 instance Serialize ModRequest where
-    get = do 
+    get = do
         fn <- getWord8
         case fn of
             1  -> f ReadCoils
@@ -125,26 +117,26 @@ instance Serialize ModRequest where
       where
         f fn w1 w2 = putWord8 fn >> putWord16be w1 >> putWord16be w2
         f' fn addr qnt cnt b = putWord8 fn >> putWord16be addr >>
-            putWord16be qnt >> putWord8 cnt >> putByteString b 
+            putWord16be qnt >> putWord8 cnt >> putByteString b
 
 
 
-data ModResponse 
-    = ReadCoilsResponse {readCoilsResponseCnt ::Word8, readCoilsResponseVal ::ByteString}
-    | ReadDiscreteInputsResponse {readDiscreteInputsResponseCnt :: Word8, readDiscreteInputsResponseVal:: ByteString}
-    | ReadHoldingRegistersResponse {readHoldingRegistersResponseCnt:: Word8 ,readHoldingRegistersResponseVal::ByteString}
-    | ReadInputRegistersResponse {readInputRegistersResponseAddr :: Word8, readInputRegistersResponseVal:: ByteString}
-    | WriteSingleCoilResponse {writeSingleCoilResponseModReg:: ModRegister,  writeSingleCoilResponseVal ::Word16}
-    | WriteSingleRegisterResponse {writeSingleRegisterResponseModReg ::ModRegister, writeSingleRegisterResponseVal ::Word16}
-    | WriteDiagnosticRegisterResponse {writeDiagnosticRegisterResponseSubFcn :: Word16, writeDiagnosticRegisterResponseDat:: Word16}
-    | WriteMultipleCoilsResponse {writeMultipleCoilsResponseModReg ::ModRegister, writeMultipleCoilsResponseVal:: Word16}
-    | WriteMultipleRegistersResponse {writeMultipleRegistersResponseModReg::ModRegister, writeMultipleRegistersResponseVal :: Word16}
+data ModResponse
+    = ReadCoilsResponse {readCoilsResponseCnt :: Word8, readCoilsResponseVal :: ByteString}
+    | ReadDiscreteInputsResponse {readDiscreteInputsResponseCnt :: Word8, readDiscreteInputsResponseVal :: ByteString}
+    | ReadHoldingRegistersResponse {readHoldingRegistersResponseCnt :: Word8,readHoldingRegistersResponseVal :: ByteString}
+    | ReadInputRegistersResponse {readInputRegistersResponseAddr :: Word8, readInputRegistersResponseVal :: ByteString}
+    | WriteSingleCoilResponse {writeSingleCoilResponseModReg :: ModRegister, writeSingleCoilResponseVal :: Word16}
+    | WriteSingleRegisterResponse {writeSingleRegisterResponseModReg :: ModRegister, writeSingleRegisterResponseVal :: Word16}
+    | WriteDiagnosticRegisterResponse {writeDiagnosticRegisterResponseSubFcn :: Word16, writeDiagnosticRegisterResponseDat :: Word16}
+    | WriteMultipleCoilsResponse {writeMultipleCoilsResponseModReg :: ModRegister, writeMultipleCoilsResponseVal :: Word16}
+    | WriteMultipleRegistersResponse {writeMultipleRegistersResponseModReg :: ModRegister, writeMultipleRegistersResponseVal :: Word16}
     | ExceptionResponse FunctionCode ExceptionCode
     | UnknownFunctionResponse FunctionCode
     deriving (Show)
 
 instance Serialize ModResponse where
-    get = do 
+    get = do
         fn <- getWord8
         case fn of
             1  -> f ReadCoilsResponse
@@ -174,7 +166,7 @@ instance Serialize ModResponse where
         (ReadInputRegistersResponse cnt b)   -> f 4 cnt b
         (WriteSingleCoilResponse addr b)     -> f' 5 addr b
         (WriteSingleRegisterResponse addr b) -> f' 6 addr b
-        (WriteDiagnosticRegisterResponse subfn dat) -> 
+        (WriteDiagnosticRegisterResponse subfn dat) ->
             putWord8 8 >> putWord16be subfn >> putWord16be dat
         (WriteMultipleCoilsResponse addr b)     -> f' 15 addr b
         (WriteMultipleRegistersResponse addr b) -> f' 16 addr b
@@ -187,7 +179,7 @@ instance Serialize ModResponse where
         f' fn addr b = putWord8 fn >> putWord16be addr >> putWord16be b
 
 
-data ExceptionCode 
+data ExceptionCode
     = IllegalFunction
     | IllegalDataAddress
     | IllegalDataValue
@@ -197,7 +189,7 @@ data ExceptionCode
     | MemoryParityError
     | GatewayPathUnavailable
     | GatewayTargetFailedToRespond
-    | UnknownExceptionCode {getUnknownException ::Word8}
+    | UnknownExceptionCode {getUnknownException :: Word8}
     deriving Show
 
 instance Serialize ExceptionCode where
@@ -227,5 +219,5 @@ instance Serialize ExceptionCode where
           x    -> UnknownExceptionCode x
 
 mkException :: SlaveId -> ExceptionCode -> ByteString
-mkException slaveId t = encode $ 
+mkException slaveId t = encode $
     ModResponseFrame slaveId $ ExceptionResponse 0x81 t
