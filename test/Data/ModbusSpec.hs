@@ -1,111 +1,89 @@
 module Data.ModbusSpec (spec) where
 
 import Data.ByteString
-import Data.Either
 import Data.Modbus
 import Data.Serialize
-import Data.Word
 import Test.Hspec
 
 spec :: Spec
 spec = do
-  describe "singleEncode" $
-    it "should check serialization of requests to make sure there aren't breaking changes" $
-    singleEncode`shouldBe` singleEncodeResult
-  describe "singleDecode" $
-    it "should Decode to a list of modbus requests of the same length" $
-    lefts singleDecode `shouldBe` []
-  describe "singleEncodeResponse" $
-    it "should check serialization of responses to make sure there aren't breaking changes" $
-    singleEncodeResponse `shouldBe` singleEncodeResponseResult
-  describe "singleResponseDecode" $
-    it "should Decode to a list of modbus responses of the same length" $
-    lefts singleDecodeResponse `shouldBe` []
+  describe "ModRequest" $ do
+    it "should serialize requests properly" $
+      (encode <$> requests) `shouldBe` requestsEncoded
+    it "should deserialize to the original modbus request" $
+      (decode <$> requestsEncoded) `shouldBe` (Right <$> requests)
 
-testModRequestEncode :: ModRegister -> Word16 -> ByteString -> [ModRequest]
-testModRequestEncode modreg val _lst = tAllRequests <*> [modreg] <*> [val]
-  where
-    tAllRequests = [ ReadCoils
-                   , ReadDiscreteInputs
-                   , ReadHoldingRegisters
-                   , ReadInputRegisters
-                   , WriteSingleCoil
-                   , WriteSingleRegister
-                   , \ _ v -> WriteDiagnosticRegister v v
-                   , \ _ _ -> WriteMultipleCoils 0 [False, False, True]
-                   , \ _ _ -> WriteMultipleRegisters 0 [0x1234, 0x3412]
-                   ]
+  describe "ModResponse" $ do
+    it "should serialize responses properly" $
+      (encode <$> responses) `shouldBe` responsesEncoded
+    it "should deserialize to the original modbus response" $
+       (decode <$> responsesEncoded) `shouldBe` (Right <$> responses)
 
-singleEncode :: [ByteString]
-singleEncode = encode <$> testModRequestEncode 1 1 (pack [49])
+requests :: [ModRequest]
+requests = [ ReadCoils 1 1
+           , ReadDiscreteInputs 1 1
+           , ReadHoldingRegisters 1 1
+           , ReadInputRegisters 1 1
+           , WriteSingleCoil 1 1
+           , WriteSingleRegister 1 1
+           , WriteDiagnosticRegister 1 1
+           , WriteMultipleCoils 0 [False, False, True]
+           , WriteMultipleRegisters 0 [0x1234, 0x3412]
+           ]
 
-singleEncodeResult :: [ByteString]
-singleEncodeResult = pack <$> [ [1,0,1,0,1]
-                              , [2,0,1,0,1]
-                              , [3,0,1,0,1]
-                              , [4,0,1,0,1]
-                              , [5,0,1,0,1]
-                              , [6,0,1,0,1]
-                              , [8,0,1,0,1]
-                              , [15,0,0,0,3,1,4]
-                              , [16,0,0,0,2,4,18,52, 52, 18]
-                              ]
+requestsEncoded :: [ByteString]
+requestsEncoded = pack <$> [ [1,0,1,0,1]
+                           , [2,0,1,0,1]
+                           , [3,0,1,0,1]
+                           , [4,0,1,0,1]
+                           , [5,0,1,0,1]
+                           , [6,0,1,0,1]
+                           , [8,0,1,0,1]
+                           , [15,0,0,0,3,1,4]
+                           , [16,0,0,0,2,4,18,52, 52, 18]
+                           ]
 
-singleDecode :: [Either String ModRequest]
-singleDecode = decode <$> singleEncodeResult
+responses :: [ModResponse]
+responses = [ ReadCoilsResponse 1 (pack [1])
+            , ReadDiscreteInputsResponse 1 (pack [1])
+            , ReadHoldingRegistersResponse 1 (pack [1])
+            , ReadInputRegistersResponse 1 (pack [1])
+            , WriteSingleCoilResponse 1 1
+            , WriteSingleRegisterResponse 1 1
+            , WriteDiagnosticRegisterResponse 1 1
+            , WriteMultipleCoilsResponse 1 1
+            , WriteMultipleRegistersResponse 1 1
+            ] ++
+            [ ExceptionResponse 1 IllegalFunction
+            , ExceptionResponse 1 IllegalDataAddress
+            , ExceptionResponse 1 IllegalDataValue
+            , ExceptionResponse 1 SlaveDeviceFailure
+            , ExceptionResponse 1 Acknowledge
+            , ExceptionResponse 1 SlaveDeviceBusy
+            , ExceptionResponse 1 MemoryParityError
+            , ExceptionResponse 1 GatewayPathUnavailable
+            , ExceptionResponse 1 GatewayTargetFailedToRespond
+            , ExceptionResponse 1 (UnknownExceptionCode 0xFF)
+            ]
 
-singleEncodeResponse :: [ByteString]
-singleEncodeResponse = encode <$> testModResponseAllFuncs 1 1 ++ testModResponseAllExceptions 1
-
-singleEncodeResponseResult :: [ByteString]
-singleEncodeResponseResult = fmap pack [ [1,1,1]
-                                       , [2,1,1]
-                                       , [3,1,1]
-                                       , [4,1,1]
-                                       , [5,0,1,0,1]
-                                       , [6,0,1,0,1]
-                                       , [8,0,1,0,1]
-                                       , [15,0,1,0,1]
-                                       , [16,0,1,0,1]
-                                       , [129,1]
-                                       , [129,2]
-                                       , [129,3]
-                                       , [129,4]
-                                       , [129,5]
-                                       , [129,6]
-                                       , [129,8]
-                                       , [129,10]
-                                       , [129,11]
-                                       , [129,255]
-                                       ]
-
-singleDecodeResponse :: [Either String ModResponse]
-singleDecodeResponse = decode <$> singleEncodeResponseResult
-
-testModResponseAllFuncs :: Word8  -> Word16-> [ModResponse]
-testModResponseAllFuncs adr  wd = tAllResponses <*> [adr] <*> [wd]
-    where
-      tAllResponses = [ \ r _ -> ReadCoilsResponse r (pack [r])
-                      , \ r _ -> ReadDiscreteInputsResponse r (pack [r])
-                      , \ r _ -> ReadHoldingRegistersResponse r (pack [r])
-                      , \ r _ -> ReadInputRegistersResponse   r (pack [r])
-                      , \ _ v -> WriteSingleCoilResponse      v v
-                      , \ _ v -> WriteSingleRegisterResponse  v v
-                      , \ _ v -> WriteDiagnosticRegisterResponse v v
-                      , \ _ v -> WriteMultipleCoilsResponse v v
-                      , \ _ v -> WriteMultipleRegistersResponse v v
-                      ]
-
-testModResponseAllExceptions :: FunctionCode -> [ModResponse]
-testModResponseAllExceptions fc = ExceptionResponse fc <$> ecs
-    where
-      ecs =  [ IllegalFunction
-             , IllegalDataAddress
-             , IllegalDataValue
-             , SlaveDeviceFailure
-             , Acknowledge
-             , SlaveDeviceBusy
-             , MemoryParityError
-             , GatewayPathUnavailable
-             , GatewayTargetFailedToRespond
-             , UnknownExceptionCode 0xFF]
+responsesEncoded :: [ByteString]
+responsesEncoded = pack <$> [ [1,1,1]
+                            , [2,1,1]
+                            , [3,1,1]
+                            , [4,1,1]
+                            , [5,0,1,0,1]
+                            , [6,0,1,0,1]
+                            , [8,0,1,0,1]
+                            , [15,0,1,0,1]
+                            , [16,0,1,0,1]
+                            , [129,1]
+                            , [129,2]
+                            , [129,3]
+                            , [129,4]
+                            , [129,5]
+                            , [129,6]
+                            , [129,8]
+                            , [129,10]
+                            , [129,11]
+                            , [129,255]
+                            ]

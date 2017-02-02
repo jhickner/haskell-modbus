@@ -45,7 +45,7 @@ data ModRequest
     | WriteDiagnosticRegister {writeDiagnosticRegisterSubFcn :: Word16, writeDiagnosticRegisterDat :: Word16}
     | WriteMultipleCoils {writeMultipleCoilsModReg :: ModRegister, qWriteMultipleCoilsVal :: [Bool]}
     | WriteMultipleRegisters {writeMultipleRegistersModReg :: ModRegister, writeMultipleRegistersVal :: [Word16]}
-    deriving (Show)
+    deriving (Eq, Show)
 
 instance Serialize ModRequest where
     get = do
@@ -121,7 +121,7 @@ data ModResponse
     | WriteMultipleRegistersResponse {writeMultipleRegistersResponseModReg :: ModRegister, writeMultipleRegistersResponseVal :: Word16}
     | ExceptionResponse FunctionCode ExceptionCode
     | UnknownFunctionResponse FunctionCode
-    deriving (Show)
+    deriving (Eq, Show)
 
 instance Serialize ModResponse where
     get = do
@@ -178,7 +178,7 @@ data ExceptionCode
     | GatewayPathUnavailable
     | GatewayTargetFailedToRespond
     | UnknownExceptionCode {getUnknownException :: Word8}
-    deriving Show
+    deriving (Eq, Show)
 
 instance Serialize ExceptionCode where
     put ec = putWord8 $ case ec of
