@@ -34,3 +34,6 @@ test-suite spec
                       , cereal 
                       , bytestring
                       , array
+                      , derive
+                      , QuickCheck
+                      , quickcheck-instances

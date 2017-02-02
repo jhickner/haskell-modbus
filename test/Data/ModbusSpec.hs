@@ -1,9 +1,15 @@
+{-# LANGUAGE ScopedTypeVariables, TemplateHaskell #-}
+{-# OPTIONS_GHC -fno-warn-orphans #-}
 module Data.ModbusSpec (spec) where
 
 import Data.ByteString
 import Data.Modbus
 import Data.Serialize
 import Test.Hspec
+import Test.Hspec.QuickCheck
+import Data.DeriveTH
+import Test.QuickCheck
+import Test.QuickCheck.Instances ()
 
 spec :: Spec
 spec = do
@@ -18,6 +24,11 @@ spec = do
       (encode <$> responses) `shouldBe` responsesEncoded
     it "should deserialize to the original modbus response" $
        (decode <$> responsesEncoded) `shouldBe` (Right <$> responses)
+
+  describe "(decode . encode) == id" $ do
+    prop "ModRequest" $ \ (req :: ModRequest) -> (decode . encode) req == Right req
+    -- TODO: fix ModResponse so the property holds, it's ExceptionResponse that's problematic
+    -- prop "ModResponse" $ \ (res :: ModResponse) -> (decode . encode) res == Right res
 
 requests :: [ModRequest]
 requests = [ ReadCoils 1 1
@@ -87,3 +98,7 @@ responsesEncoded = pack <$> [ [1,1,1]
                             , [129,11]
                             , [129,255]
                             ]
+
+derive makeArbitrary ''ModRequest
+derive makeArbitrary ''ModResponse
+derive makeArbitrary ''ExceptionCode
