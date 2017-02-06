@@ -96,7 +96,7 @@ instance Serialize ModRequest where
           putWord16be addr
           putWord16be (fromIntegral $ length vals)
           putWord8 (fromIntegral $ (7 + length vals) `div` 8)
-          let a = listArray (0, length vals) vals
+          let a = listArray (0, length vals - 1) vals
           putByteString $ toByteString a
 
         f'' fn addr vals = do
