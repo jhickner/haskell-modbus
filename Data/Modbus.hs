@@ -7,12 +7,12 @@ module Data.Modbus
   , FunctionCode
   ) where
 
-import Control.Monad
-import Data.Array.BitArray
-import Data.Array.BitArray.ByteString
-import Data.ByteString (ByteString)
-import Data.Serialize
-import Data.Word
+import           Control.Monad
+import           Data.Array.BitArray
+import           Data.Array.BitArray.ByteString
+import qualified Data.ByteString as BS
+import           Data.Serialize
+import           Data.Word
 
 type ModRegister = Word16
 type FunctionCode = Word8
@@ -22,8 +22,7 @@ matches :: ModRequest -> ModResponse -> Bool
 matches req res = case (req, res) of
     (ReadCoils{},                 ReadCoilsResponse{})                 -> True
     (ReadDiscreteInputs{},        ReadDiscreteInputsResponse{})        -> True
-    (ReadHoldingRegisters _ a,    ReadHoldingRegistersResponse b _)    ->
-        fromIntegral b == 2 * a -- 2 response bytes per point
+    (ReadHoldingRegisters _ a,    ReadHoldingRegistersResponse b)      -> fromIntegral a == length b
     (ReadInputRegisters{},        ReadInputRegistersResponse{})        -> True
     (WriteSingleCoil a _,         WriteSingleCoilResponse b _)         -> a == b
     (WriteSingleRegister a _,     WriteSingleRegisterResponse b _)     -> a == b
@@ -110,10 +109,10 @@ instance Serialize ModRequest where
 
 
 data ModResponse
-    = ReadCoilsResponse {readCoilsResponseCnt :: Word8, readCoilsResponseVal :: ByteString}
-    | ReadDiscreteInputsResponse {readDiscreteInputsResponseCnt :: Word8, readDiscreteInputsResponseVal :: ByteString}
-    | ReadHoldingRegistersResponse {readHoldingRegistersResponseCnt :: Word8,readHoldingRegistersResponseVal :: ByteString}
-    | ReadInputRegistersResponse {readInputRegistersResponseAddr :: Word8, readInputRegistersResponseVal :: ByteString}
+    = ReadCoilsResponse {readCoilsResponseVal :: [Bool]}
+    | ReadDiscreteInputsResponse {readDiscreteInputsResponseVal :: [Bool]}
+    | ReadHoldingRegistersResponse {readHoldingRegistersResponseVal :: [Word16]}
+    | ReadInputRegistersResponse {readInputRegistersVal :: [Word16]}
     | WriteSingleCoilResponse {writeSingleCoilResponseModReg :: ModRegister, writeSingleCoilResponseVal :: Word16}
     | WriteSingleRegisterResponse {writeSingleRegisterResponseModReg :: ModRegister, writeSingleRegisterResponseVal :: Word16}
     | WriteDiagnosticRegisterResponse {writeDiagnosticRegisterResponseSubFcn :: Word16, writeDiagnosticRegisterResponseDat :: Word16}
@@ -129,42 +128,56 @@ instance Serialize ModResponse where
         case fn of
             1  -> f ReadCoilsResponse
             2  -> f ReadDiscreteInputsResponse
-            3  -> f ReadHoldingRegistersResponse
-            4  -> f ReadInputRegistersResponse
-            5  -> f' WriteSingleCoilResponse
-            6  -> f' WriteSingleRegisterResponse
-            8  -> f' WriteDiagnosticRegisterResponse
-            15 -> f' WriteMultipleCoilsResponse
-            16 -> f' WriteMultipleRegistersResponse
+            3  -> f' ReadHoldingRegistersResponse
+            4  -> f' ReadInputRegistersResponse
+            5  -> f'' WriteSingleCoilResponse
+            6  -> f'' WriteSingleRegisterResponse
+            8  -> f'' WriteDiagnosticRegisterResponse
+            15 -> f'' WriteMultipleCoilsResponse
+            16 -> f'' WriteMultipleRegistersResponse
             x | x >= 0x80 -> ExceptionResponse (x - 0x80) <$> get
             _  -> return $ UnknownFunctionResponse fn
       where
         f cons = do
-            count <- getWord8
-            body  <- getBytes (fromIntegral count)
-            return $ cons count body
+          count <- getWord8
+          body  <- getBytes (fromIntegral count)
+          let a = fromByteString (0 :: Int, 8 * BS.length body - 1) body
+          return $ cons (elems a)
         f' cons = do
+          count <- getWord8
+          ws <- replicateM (fromIntegral $ count `div` 2) getWord16be
+          return $ cons ws
+        f'' cons = do
             addr <- getWord16be
             body <- getWord16be
             return $ cons addr body
+
     put req = case req of
-        (ReadCoilsResponse cnt b)            -> f 1 cnt b
-        (ReadDiscreteInputsResponse cnt b)   -> f 2 cnt b
-        (ReadHoldingRegistersResponse cnt b) -> f 3 cnt b
-        (ReadInputRegistersResponse cnt b)   -> f 4 cnt b
-        (WriteSingleCoilResponse addr b)     -> f' 5 addr b
-        (WriteSingleRegisterResponse addr b) -> f' 6 addr b
+        (ReadCoilsResponse vals) -> f 1 vals
+        (ReadDiscreteInputsResponse vals) -> f 2 vals
+        (ReadHoldingRegistersResponse vals) -> f' 3 vals
+        (ReadInputRegistersResponse vals)   -> f' 4 vals
+        (WriteSingleCoilResponse addr b)     -> f'' 5 addr b
+        (WriteSingleRegisterResponse addr b) -> f'' 6 addr b
         (WriteDiagnosticRegisterResponse subfn dat) ->
             putWord8 8 >> putWord16be subfn >> putWord16be dat
-        (WriteMultipleCoilsResponse addr b)     -> f' 15 addr b
-        (WriteMultipleRegistersResponse addr b) -> f' 16 addr b
+        (WriteMultipleCoilsResponse addr b)     -> f'' 15 addr b
+        (WriteMultipleRegistersResponse addr b) -> f'' 16 addr b
         (ExceptionResponse fn ec)
                        |fn >= 0x80    -> put fn >> put ec
                        |otherwise     -> put (fn + 0x80) >> put ec
         (UnknownFunctionResponse fn) -> put fn
       where
-        f fn cnt b = putWord8 fn >> putWord8 cnt >> putByteString b
-        f' fn addr b = putWord8 fn >> putWord16be addr >> putWord16be b
+        f fn vals = do
+          putWord8 fn
+          putWord8 (fromIntegral $ (7 + length vals) `div` 8)
+          let a = listArray (0, length vals - 1) vals
+          putByteString $ toByteString a
+        f' fn vals = do
+          putWord8 fn
+          putWord8 (fromIntegral $ 2 * length vals)
+          mapM_ putWord16be vals
+        f'' fn addr b = putWord8 fn >> putWord16be addr >> putWord16be b
 
 
 data ExceptionCode

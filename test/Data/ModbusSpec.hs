@@ -55,10 +55,10 @@ requestsEncoded = pack <$> [ [1,0,1,0,1]
                            ]
 
 responses :: [ModResponse]
-responses = [ ReadCoilsResponse 1 (pack [1])
-            , ReadDiscreteInputsResponse 1 (pack [1])
-            , ReadHoldingRegistersResponse 1 (pack [1])
-            , ReadInputRegistersResponse 1 (pack [1])
+responses = [ ReadCoilsResponse [True, False, False, False, False, False, False, False]
+            , ReadDiscreteInputsResponse [True, False, False, False, False, False, False, False]
+            , ReadHoldingRegistersResponse [1]
+            , ReadInputRegistersResponse [1]
             , WriteSingleCoilResponse 1 1
             , WriteSingleRegisterResponse 1 1
             , WriteDiagnosticRegisterResponse 1 1
@@ -80,8 +80,8 @@ responses = [ ReadCoilsResponse 1 (pack [1])
 responsesEncoded :: [ByteString]
 responsesEncoded = pack <$> [ [1,1,1]
                             , [2,1,1]
-                            , [3,1,1]
-                            , [4,1,1]
+                            , [3,2,0,1]
+                            , [4,2,0,1]
                             , [5,0,1,0,1]
                             , [6,0,1,0,1]
                             , [8,0,1,0,1]
