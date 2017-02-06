@@ -40,7 +40,7 @@ data ModRequest
     | ReadHoldingRegisters {readHoldingRegistersModReg :: ModRegister, readHoldingRegistersCnt :: Word16}
     | ReadInputRegisters {readInputRegistersModReg :: ModRegister, readInputRegistersCnt :: Word16}
     | WriteSingleCoil {writeSingleCoilModReg :: ModRegister, writeSingleCoilCnt :: Word16}
-    | WriteSingleRegister {writeSingleRegisterModReg :: ModRegister, writeSingleRegister :: Word16}
+    | WriteSingleRegister {writeSingleRegisterModReg :: ModRegister, writeSingleRegisterDat :: Word16}
     | WriteDiagnosticRegister {writeDiagnosticRegisterSubFcn :: Word16, writeDiagnosticRegisterDat :: Word16}
     | WriteMultipleCoils {writeMultipleCoilsModReg :: ModRegister, qWriteMultipleCoilsVal :: [Bool]}
     | WriteMultipleRegisters {writeMultipleRegistersModReg :: ModRegister, writeMultipleRegistersVal :: [Word16]}
