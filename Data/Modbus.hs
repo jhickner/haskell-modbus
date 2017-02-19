@@ -39,15 +39,15 @@ matches req res = case (req, res) of
     _ -> False
 
 data ModRequest
-    = ReadCoils {readCoilsModReg :: ModRegister, readCoilsCnt :: Word16}
-    | ReadDiscreteInputs {readDiscreteInputsModReg :: ModRegister, readDiscreteInputsCnt :: Word16}
-    | ReadHoldingRegisters {readHoldingRegistersModReg :: ModRegister, readHoldingRegistersCnt :: Word16}
-    | ReadInputRegisters {readInputRegistersModReg :: ModRegister, readInputRegistersCnt :: Word16}
-    | WriteSingleCoil {writeSingleCoilModReg :: ModRegister, writeSingleCoilCnt :: Word16}
-    | WriteSingleRegister {writeSingleRegisterModReg :: ModRegister, writeSingleRegisterDat :: Word16}
-    | WriteDiagnosticRegister {writeDiagnosticRegisterSubFcn :: Word16, writeDiagnosticRegisterDat :: Word16}
-    | WriteMultipleCoils {writeMultipleCoilsModReg :: ModRegister, qWriteMultipleCoilsVal :: [Bool]}
-    | WriteMultipleRegisters {writeMultipleRegistersModReg :: ModRegister, writeMultipleRegistersVal :: [Word16]}
+    = ReadCoils ModRegister Word16
+    | ReadDiscreteInputs ModRegister Word16
+    | ReadHoldingRegisters ModRegister Word16
+    | ReadInputRegisters ModRegister Word16
+    | WriteSingleCoil ModRegister Word16
+    | WriteSingleRegister ModRegister Word16
+    | WriteDiagnosticRegister Word16 Word16
+    | WriteMultipleCoils ModRegister [Bool]
+    | WriteMultipleRegisters ModRegister [Word16]
     deriving (Eq, Show)
 
 instance Serialize ModRequest where
@@ -113,15 +113,15 @@ instance Serialize ModRequest where
 
 
 data ModResponse
-    = ReadCoilsResponse {readCoilsResponseVal :: [Bool]}
-    | ReadDiscreteInputsResponse {readDiscreteInputsResponseVal :: [Bool]}
-    | ReadHoldingRegistersResponse {readHoldingRegistersResponseVal :: [Word16]}
-    | ReadInputRegistersResponse {readInputRegistersVal :: [Word16]}
-    | WriteSingleCoilResponse {writeSingleCoilResponseModReg :: ModRegister, writeSingleCoilResponseVal :: Word16}
-    | WriteSingleRegisterResponse {writeSingleRegisterResponseModReg :: ModRegister, writeSingleRegisterResponseVal :: Word16}
-    | WriteDiagnosticRegisterResponse {writeDiagnosticRegisterResponseSubFcn :: Word16, writeDiagnosticRegisterResponseDat :: Word16}
-    | WriteMultipleCoilsResponse {writeMultipleCoilsResponseModReg :: ModRegister, writeMultipleCoilsResponseVal :: Word16}
-    | WriteMultipleRegistersResponse {writeMultipleRegistersResponseModReg :: ModRegister, writeMultipleRegistersResponseVal :: Word16}
+    = ReadCoilsResponse [Bool]
+    | ReadDiscreteInputsResponse [Bool]
+    | ReadHoldingRegistersResponse [Word16]
+    | ReadInputRegistersResponse [Word16]
+    | WriteSingleCoilResponse ModRegister Word16
+    | WriteSingleRegisterResponse ModRegister Word16
+    | WriteDiagnosticRegisterResponse Word16 Word16
+    | WriteMultipleCoilsResponse ModRegister Word16
+    | WriteMultipleRegistersResponse ModRegister Word16
     | ReadCoilsException ExceptionCode
     | ReadDiscreteInputsException ExceptionCode
     | ReadHoldingRegistersException ExceptionCode
