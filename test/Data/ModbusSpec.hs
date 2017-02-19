@@ -27,7 +27,7 @@ spec = do
 
   describe "(decode . encode) == id" $ do
     prop "ModRequest" $ \ (req :: ModRequest) -> (decode . encode) req == Right req
-    -- TODO: fix ModResponse so the property holds, it's ExceptionResponse that's problematic
+    -- TODO: fix ModResponse so the property holds, it's ReadCoilsResponse that's problematic
     -- prop "ModResponse" $ \ (res :: ModResponse) -> (decode . encode) res == Right res
 
 requests :: [ModRequest]
@@ -65,16 +65,15 @@ responses = [ ReadCoilsResponse [True, False, False, False, False, False, False,
             , WriteMultipleCoilsResponse 1 1
             , WriteMultipleRegistersResponse 1 1
             ] ++
-            [ ExceptionResponse 1 IllegalFunction
-            , ExceptionResponse 1 IllegalDataAddress
-            , ExceptionResponse 1 IllegalDataValue
-            , ExceptionResponse 1 SlaveDeviceFailure
-            , ExceptionResponse 1 Acknowledge
-            , ExceptionResponse 1 SlaveDeviceBusy
-            , ExceptionResponse 1 MemoryParityError
-            , ExceptionResponse 1 GatewayPathUnavailable
-            , ExceptionResponse 1 GatewayTargetFailedToRespond
-            , ExceptionResponse 1 (UnknownExceptionCode 0xFF)
+            [ ReadCoilsException IllegalFunction
+            , ReadCoilsException IllegalDataAddress
+            , ReadCoilsException IllegalDataValue
+            , ReadCoilsException SlaveDeviceFailure
+            , ReadCoilsException Acknowledge
+            , ReadCoilsException SlaveDeviceBusy
+            , ReadCoilsException MemoryParityError
+            , ReadCoilsException GatewayPathUnavailable
+            , ReadCoilsException GatewayTargetFailedToRespond
             ]
 
 responsesEncoded :: [ByteString]
@@ -96,7 +95,6 @@ responsesEncoded = pack <$> [ [1,1,1]
                             , [129,8]
                             , [129,10]
                             , [129,11]
-                            , [129,255]
                             ]
 
 derive makeArbitrary ''ModRequest

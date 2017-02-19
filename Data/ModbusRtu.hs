@@ -45,4 +45,4 @@ getFrame cons = do
 
 mkException :: SlaveId -> ExceptionCode -> ByteString
 mkException slaveId t = encode $
-    ModResponseFrame slaveId $ ExceptionResponse 0x81 t
+    ModResponseFrame slaveId $ ReadCoilsException t
