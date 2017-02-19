@@ -27,8 +27,19 @@ spec = do
 
   describe "(decode . encode) == id" $ do
     prop "ModRequest" $ \ (req :: ModRequest) -> (decode . encode) req == Right req
-    -- TODO: fix ModResponse so the property holds, it's ReadCoilsResponse that's problematic
-    -- prop "ModResponse" $ \ (res :: ModResponse) -> (decode . encode) res == Right res
+    prop "ModResponse" $ \ (res :: ModResponse) -> (decode . encode) res == Right (fixResponse res)
+
+fixResponse :: ModResponse -> ModResponse
+fixResponse = go
+  where
+    go (ReadCoilsResponse bl) = extend ReadCoilsResponse bl
+    go (ReadDiscreteInputsResponse bl) = extend ReadDiscreteInputsResponse bl
+    go r = r
+
+    extend c bl =
+      let l = Prelude.length bl
+          l' = ((7 + l) `div` 8) * 8
+      in c (bl ++ Prelude.replicate (l' - l) False)
 
 requests :: [ModRequest]
 requests = [ ReadCoils 1 1
