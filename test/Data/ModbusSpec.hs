@@ -46,7 +46,7 @@ requests = [ ReadCoils 1 1
            , ReadDiscreteInputs 1 1
            , ReadHoldingRegisters 1 1
            , ReadInputRegisters 1 1
-           , WriteSingleCoil 1 1
+           , WriteSingleCoil 1 True
            , WriteSingleRegister 1 1
            , WriteDiagnosticRegister 1 1
            , WriteMultipleCoils 0 [False, False, True]
@@ -58,7 +58,7 @@ requestsEncoded = pack <$> [ [1,0,1,0,1]
                            , [2,0,1,0,1]
                            , [3,0,1,0,1]
                            , [4,0,1,0,1]
-                           , [5,0,1,0,1]
+                           , [5,0,1,0xff,0]
                            , [6,0,1,0,1]
                            , [8,0,1,0,1]
                            , [15,0,0,0,3,1,4]
@@ -70,7 +70,7 @@ responses = [ ReadCoilsResponse [True, False, False, False, False, False, False,
             , ReadDiscreteInputsResponse [True, False, False, False, False, False, False, False]
             , ReadHoldingRegistersResponse [1]
             , ReadInputRegistersResponse [1]
-            , WriteSingleCoilResponse 1 1
+            , WriteSingleCoilResponse 1 True
             , WriteSingleRegisterResponse 1 1
             , WriteDiagnosticRegisterResponse 1 1
             , WriteMultipleCoilsResponse 1 1
@@ -92,7 +92,7 @@ responsesEncoded = pack <$> [ [1,1,1]
                             , [2,1,1]
                             , [3,2,0,1]
                             , [4,2,0,1]
-                            , [5,0,1,0,1]
+                            , [5,0,1,0xff,0]
                             , [6,0,1,0,1]
                             , [8,0,1,0,1]
                             , [15,0,1,0,1]

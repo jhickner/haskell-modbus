@@ -6,6 +6,7 @@ module Data.Modbus
   , ModRegister
   ) where
 
+import           Control.Applicative
 import           Control.Monad
 import           Data.Array.BitArray
 import           Data.Array.BitArray.ByteString
@@ -43,7 +44,7 @@ data ModRequest
     | ReadDiscreteInputs ModRegister Word16
     | ReadHoldingRegisters ModRegister Word16
     | ReadInputRegisters ModRegister Word16
-    | WriteSingleCoil ModRegister Word16
+    | WriteSingleCoil ModRegister Bool
     | WriteSingleRegister ModRegister Word16
     | WriteDiagnosticRegister Word16 Word16
     | WriteMultipleCoils ModRegister [Bool]
@@ -58,7 +59,7 @@ instance Serialize ModRequest where
             2  -> f ReadDiscreteInputs
             3  -> f ReadHoldingRegisters
             4  -> f ReadInputRegisters
-            5  -> f WriteSingleCoil
+            5  -> WriteSingleCoil <$> getWord16be <*> (liftA (== 0xff00) getWord16be)
             6  -> f WriteSingleRegister
             8  -> f WriteDiagnosticRegister
             15 -> f'
@@ -87,7 +88,7 @@ instance Serialize ModRequest where
         (ReadDiscreteInputs addr cnt)       -> f 2 addr cnt
         (ReadHoldingRegisters addr cnt)     -> f 3 addr cnt
         (ReadInputRegisters addr cnt)       -> f 4 addr cnt
-        (WriteSingleCoil addr cnt)          -> f 5 addr cnt
+        (WriteSingleCoil addr val) -> putWord8 5 >> putWord16be addr >> putWord16be (if val then 0xff00 else 0)
         (WriteSingleRegister addr cnt)      -> f 6 addr cnt
         (WriteDiagnosticRegister subfn dat) -> f 8 subfn dat
         (WriteMultipleCoils addr vals)      -> f' 15 addr vals
@@ -117,7 +118,7 @@ data ModResponse
     | ReadDiscreteInputsResponse [Bool]
     | ReadHoldingRegistersResponse [Word16]
     | ReadInputRegistersResponse [Word16]
-    | WriteSingleCoilResponse ModRegister Word16
+    | WriteSingleCoilResponse ModRegister Bool
     | WriteSingleRegisterResponse ModRegister Word16
     | WriteDiagnosticRegisterResponse Word16 Word16
     | WriteMultipleCoilsResponse ModRegister Word16
@@ -141,7 +142,7 @@ instance Serialize ModResponse where
             0x02 -> f ReadDiscreteInputsResponse
             0x03 -> f' ReadHoldingRegistersResponse
             0x04 -> f' ReadInputRegistersResponse
-            0x05 -> f'' WriteSingleCoilResponse
+            0x05 -> WriteSingleCoilResponse <$> getWord16be <*> liftA (== 0xff00) getWord16be
             0x06 -> f'' WriteSingleRegisterResponse
             0x08 -> f'' WriteDiagnosticRegisterResponse
             0x0f -> f'' WriteMultipleCoilsResponse
@@ -176,7 +177,8 @@ instance Serialize ModResponse where
         (ReadDiscreteInputsResponse vals) -> f 2 vals
         (ReadHoldingRegistersResponse vals) -> f' 3 vals
         (ReadInputRegistersResponse vals)   -> f' 4 vals
-        (WriteSingleCoilResponse addr b)     -> f'' 5 addr b
+        (WriteSingleCoilResponse addr val) ->
+          putWord8 5 >> putWord16be addr >> putWord16be (if val then 0xff00 else 0)
         (WriteSingleRegisterResponse addr b) -> f'' 6 addr b
         (WriteDiagnosticRegisterResponse subfn dat) ->
             putWord8 8 >> putWord16be subfn >> putWord16be dat
