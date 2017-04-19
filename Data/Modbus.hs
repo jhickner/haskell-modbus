@@ -1,86 +1,55 @@
 module Data.Modbus
   ( ModRequest(..)
   , ModResponse(..)
-  , ModRequestFrame(..)
-  , ModResponseFrame(..)
   , ExceptionCode(..)
-  , mkException
   , matches
   , ModRegister
-  , SlaveId
-  , FunctionCode
   ) where
 
-import Control.Monad
-import Data.ByteString (ByteString)
-import qualified Data.ByteString as B
-import Data.Digest.CRC16
-import Data.Serialize
-import Data.Word
+import           Control.Applicative
+import           Control.Monad
+import           Data.Array.BitArray
+import           Data.Array.BitArray.ByteString
+import qualified Data.ByteString as BS
+import           Data.Serialize
+import           Data.Word
 
 type ModRegister = Word16
-type SlaveId = Word8
-type FunctionCode = Word8
-
-data ModRequestFrame = ModRequestFrame { qSlaveId :: SlaveId, qModRequest :: ModRequest} deriving (Show)
-data ModResponseFrame = ModResponseFrame { rSlaveId :: SlaveId, rModResponse :: ModResponse} deriving (Show)
-
-instance Serialize ModRequestFrame where
-    get = getFrame ModRequestFrame
-    put (ModRequestFrame fid req) = putFrame fid req
-
-instance Serialize ModResponseFrame where
-    get = getFrame ModResponseFrame
-    put (ModResponseFrame fid req) = putFrame fid req
-
-putFrame :: Serialize a => Word8 -> a -> PutM ()
-putFrame fid req =
-    putWord8 fid >> putByteString body >> putWord16le (crc16 packet)
-  where
-    body = encode req
-    packet = B.unpack $ B.cons fid body
-
-getFrame :: Serialize a => (Word8 -> a -> b) -> Get b
-getFrame cons = do
-    fid <- get
-    req <- get
-    crc <- getWord16le
-    when (crc /= crc' fid req) $ fail "CRC check failed"
-    return $ cons fid req
-  where
-    crc' fid req = crc16 . B.unpack . B.cons fid $ encode req
-
--- Frame Response has to be split out for encoding problems
 
 -- | Check that the given response is appropriate for the given request.
 matches :: ModRequest -> ModResponse -> Bool
 matches req res = case (req, res) of
-    (ReadCoils{},                 ReadCoilsResponse{})                 -> True
-    (ReadDiscreteInputs{},        ReadDiscreteInputsResponse{})        -> True
-    (ReadHoldingRegisters _ a,    ReadHoldingRegistersResponse b _)    ->
-        fromIntegral b == 2 * a -- 2 response bytes per point
-    (ReadInputRegisters{},        ReadInputRegistersResponse{})        -> True
-    (WriteSingleCoil a _,         WriteSingleCoilResponse b _)         -> a == b
-    (WriteSingleRegister a _,     WriteSingleRegisterResponse b _)     -> a == b
+    (ReadCoils{}, ReadCoilsResponse{}) -> True
+    (ReadCoils{}, ReadCoilsException{}) -> True
+    (ReadDiscreteInputs{}, ReadDiscreteInputsResponse{}) -> True
+    (ReadDiscreteInputs{}, ReadDiscreteInputsException{}) -> True
+    (ReadHoldingRegisters _ a, ReadHoldingRegistersResponse b) -> fromIntegral a == length b
+    (ReadHoldingRegisters{}, ReadHoldingRegistersException{}) -> True
+    (ReadInputRegisters{}, ReadInputRegistersResponse{}) -> True
+    (ReadInputRegisters{}, ReadInputRegistersException{}) -> True
+    (WriteSingleCoil a _, WriteSingleCoilResponse b _) -> a == b
+    (WriteSingleCoil{}, WriteSingleCoilException{}) -> True
+    (WriteSingleRegister a _, WriteSingleRegisterResponse b _) -> a == b
+    (WriteSingleRegister{}, WriteSingleRegisterException{}) -> True
     (WriteDiagnosticRegister a _, WriteDiagnosticRegisterResponse b _) -> a == b
-    (WriteMultipleCoils{},        WriteMultipleCoilsResponse{})        -> True
-    (WriteMultipleRegisters{},    WriteMultipleRegistersResponse{})    -> True
-    -- TODO: should check that request fn code matches exception
-    (_,                           ExceptionResponse{})                 -> True
-    (_,                           UnknownFunctionResponse{})           -> True
-    _                                                                  -> False
+    (WriteDiagnosticRegister{}, WriteDiagnosticRegisterException{}) -> True
+    (WriteMultipleCoils{}, WriteMultipleCoilsResponse{}) -> True
+    (WriteMultipleCoils{}, WriteMultipleCoilsException{}) -> True
+    (WriteMultipleRegisters{}, WriteMultipleRegistersResponse{}) -> True
+    (WriteMultipleRegisters{}, WriteMultipleRegistersException{}) -> True
+    _ -> False
 
 data ModRequest
-    = ReadCoils {readCoilsModReg :: ModRegister, readCoilsCnt :: Word16}
-    | ReadDiscreteInputs {readDiscreteInputsModReg :: ModRegister, readDiscreteInputsCnt :: Word16}
-    | ReadHoldingRegisters {readHoldingRegistersModReg :: ModRegister, readHoldingRegistersCnt :: Word16}
-    | ReadInputRegisters {readInputRegistersModReg :: ModRegister, readInputRegistersCnt :: Word16}
-    | WriteSingleCoil {writeSingleCoilModReg :: ModRegister, writeSingleCoilCnt :: Word16}
-    | WriteSingleRegister {writeSingleRegisterModReg :: ModRegister, writeSingleRegister :: Word16}
-    | WriteDiagnosticRegister {writeDiagnosticRegisterSubFcn :: Word16, writeDiagnosticRegisterDat :: Word16}
-    | WriteMultipleCoils {writeMultipleCoilsModReg :: ModRegister, writeMultipleCoilsQty :: Word16, writeMultipleCoilsCnt :: Word8, qWriteMultipleCoilsVal :: ByteString}
-    | WriteMultipleRegisters {writeMultipleRegistersModReg :: ModRegister, writeMultipleRegistersQty :: Word16, writeMultipleRegistersCnt :: Word8, writeMultipleRegistersVal :: ByteString}
-    deriving (Show)
+    = ReadCoils ModRegister Word16
+    | ReadDiscreteInputs ModRegister Word16
+    | ReadHoldingRegisters ModRegister Word16
+    | ReadInputRegisters ModRegister Word16
+    | WriteSingleCoil ModRegister Bool
+    | WriteSingleRegister ModRegister Word16
+    | WriteDiagnosticRegister Word16 Word16
+    | WriteMultipleCoils ModRegister [Bool]
+    | WriteMultipleRegisters ModRegister [Word16]
+    deriving (Eq, Show)
 
 instance Serialize ModRequest where
     get = do
@@ -90,93 +59,151 @@ instance Serialize ModRequest where
             2  -> f ReadDiscreteInputs
             3  -> f ReadHoldingRegisters
             4  -> f ReadInputRegisters
-            5  -> f WriteSingleCoil
+            5  -> WriteSingleCoil <$> getWord16be <*> (liftA (== 0xff00) getWord16be)
             6  -> f WriteSingleRegister
             8  -> f WriteDiagnosticRegister
-            15 -> f' WriteMultipleCoils
-            16 -> f' WriteMultipleRegisters
+            15 -> f'
+            16 -> f''
             _  -> fail $ "Unsupported function code: " ++ show fn
       where
         f cons = cons <$> getWord16be <*> getWord16be
-        f' cons = do
+
+        f' = do
+          addr  <- getWord16be
+          quant <- getWord16be
+          count <- getWord8
+          body  <- getBytes (fromIntegral count)
+          let a = fromByteString (0 :: Int, fromIntegral quant - 1) body
+          return $ WriteMultipleCoils addr (elems a)
+
+        f'' = do
             addr  <- getWord16be
             quant <- getWord16be
-            count <- getWord8
-            body  <- getBytes (fromIntegral count)
-            return $ cons addr quant count body
+            _ <- getWord8
+            vals  <- replicateM (fromIntegral quant) getWord16be
+            return $ WriteMultipleRegisters addr vals
+
     put req = case req of
         (ReadCoils addr cnt)                -> f 1 addr cnt
         (ReadDiscreteInputs addr cnt)       -> f 2 addr cnt
         (ReadHoldingRegisters addr cnt)     -> f 3 addr cnt
         (ReadInputRegisters addr cnt)       -> f 4 addr cnt
-        (WriteSingleCoil addr cnt)          -> f 5 addr cnt
+        (WriteSingleCoil addr val) -> putWord8 5 >> putWord16be addr >> putWord16be (if val then 0xff00 else 0)
         (WriteSingleRegister addr cnt)      -> f 6 addr cnt
         (WriteDiagnosticRegister subfn dat) -> f 8 subfn dat
-        (WriteMultipleCoils addr qnt cnt b)      -> f' 15 addr qnt cnt b
-        (WriteMultipleRegisters addr qnt cnt b)  -> f' 16 addr qnt cnt b
+        (WriteMultipleCoils addr vals)      -> f' 15 addr vals
+        (WriteMultipleRegisters addr vals)  -> f'' 16 addr vals
       where
         f fn w1 w2 = putWord8 fn >> putWord16be w1 >> putWord16be w2
-        f' fn addr qnt cnt b = putWord8 fn >> putWord16be addr >>
-            putWord16be qnt >> putWord8 cnt >> putByteString b
+
+        f' fn addr vals = do
+          putWord8 fn
+          putWord16be addr
+          putWord16be (fromIntegral $ length vals)
+          putWord8 (fromIntegral $ (7 + length vals) `div` 8)
+          let a = listArray (0, length vals - 1) vals
+          putByteString $ toByteString a
+
+        f'' fn addr vals = do
+          putWord8 fn
+          putWord16be addr
+          putWord16be (fromIntegral $ length vals)
+          putWord8 (fromIntegral $ 2 * length vals)
+          mapM_ putWord16be vals
 
 
 
 data ModResponse
-    = ReadCoilsResponse {readCoilsResponseCnt :: Word8, readCoilsResponseVal :: ByteString}
-    | ReadDiscreteInputsResponse {readDiscreteInputsResponseCnt :: Word8, readDiscreteInputsResponseVal :: ByteString}
-    | ReadHoldingRegistersResponse {readHoldingRegistersResponseCnt :: Word8,readHoldingRegistersResponseVal :: ByteString}
-    | ReadInputRegistersResponse {readInputRegistersResponseAddr :: Word8, readInputRegistersResponseVal :: ByteString}
-    | WriteSingleCoilResponse {writeSingleCoilResponseModReg :: ModRegister, writeSingleCoilResponseVal :: Word16}
-    | WriteSingleRegisterResponse {writeSingleRegisterResponseModReg :: ModRegister, writeSingleRegisterResponseVal :: Word16}
-    | WriteDiagnosticRegisterResponse {writeDiagnosticRegisterResponseSubFcn :: Word16, writeDiagnosticRegisterResponseDat :: Word16}
-    | WriteMultipleCoilsResponse {writeMultipleCoilsResponseModReg :: ModRegister, writeMultipleCoilsResponseVal :: Word16}
-    | WriteMultipleRegistersResponse {writeMultipleRegistersResponseModReg :: ModRegister, writeMultipleRegistersResponseVal :: Word16}
-    | ExceptionResponse FunctionCode ExceptionCode
-    | UnknownFunctionResponse FunctionCode
-    deriving (Show)
+    = ReadCoilsResponse [Bool]
+    | ReadDiscreteInputsResponse [Bool]
+    | ReadHoldingRegistersResponse [Word16]
+    | ReadInputRegistersResponse [Word16]
+    | WriteSingleCoilResponse ModRegister Bool
+    | WriteSingleRegisterResponse ModRegister Word16
+    | WriteDiagnosticRegisterResponse Word16 Word16
+    | WriteMultipleCoilsResponse ModRegister Word16
+    | WriteMultipleRegistersResponse ModRegister Word16
+    | ReadCoilsException ExceptionCode
+    | ReadDiscreteInputsException ExceptionCode
+    | ReadHoldingRegistersException ExceptionCode
+    | ReadInputRegistersException ExceptionCode
+    | WriteSingleCoilException ExceptionCode
+    | WriteSingleRegisterException ExceptionCode
+    | WriteDiagnosticRegisterException ExceptionCode
+    | WriteMultipleCoilsException ExceptionCode
+    | WriteMultipleRegistersException ExceptionCode
+    deriving (Eq, Show)
 
 instance Serialize ModResponse where
     get = do
         fn <- getWord8
         case fn of
-            1  -> f ReadCoilsResponse
-            2  -> f ReadDiscreteInputsResponse
-            3  -> f ReadHoldingRegistersResponse
-            4  -> f ReadInputRegistersResponse
-            5  -> f' WriteSingleCoilResponse
-            6  -> f' WriteSingleRegisterResponse
-            8  -> f' WriteDiagnosticRegisterResponse
-            15 -> f' WriteMultipleCoilsResponse
-            16 -> f' WriteMultipleRegistersResponse
-            x | x >= 0x80 -> ExceptionResponse (x - 0x80) <$> get
-            _  -> return $ UnknownFunctionResponse fn
+            0x01 -> f ReadCoilsResponse
+            0x02 -> f ReadDiscreteInputsResponse
+            0x03 -> f' ReadHoldingRegistersResponse
+            0x04 -> f' ReadInputRegistersResponse
+            0x05 -> WriteSingleCoilResponse <$> getWord16be <*> liftA (== 0xff00) getWord16be
+            0x06 -> f'' WriteSingleRegisterResponse
+            0x08 -> f'' WriteDiagnosticRegisterResponse
+            0x0f -> f'' WriteMultipleCoilsResponse
+            0x10 -> f'' WriteMultipleRegistersResponse
+            0x81 -> ReadCoilsException <$> get
+            0x82 -> ReadDiscreteInputsException <$> get
+            0x83 -> ReadHoldingRegistersException <$> get
+            0x84 -> ReadInputRegistersException <$> get
+            0x85 -> WriteSingleCoilException <$> get
+            0x86 -> WriteSingleRegisterException <$> get
+            0x88 -> WriteDiagnosticRegisterException <$> get
+            0x8f -> WriteMultipleCoilsException <$> get
+            0x90 -> WriteMultipleRegistersException <$> get
+            _ -> fail $ "Unsupported function code: " ++ show fn
       where
         f cons = do
-            count <- getWord8
-            body  <- getBytes (fromIntegral count)
-            return $ cons count body
+          count <- getWord8
+          body  <- getBytes (fromIntegral count)
+          let a = fromByteString (0 :: Int, 8 * BS.length body - 1) body
+          return $ cons (elems a)
         f' cons = do
+          count <- getWord8
+          ws <- replicateM (fromIntegral $ count `div` 2) getWord16be
+          return $ cons ws
+        f'' cons = do
             addr <- getWord16be
             body <- getWord16be
             return $ cons addr body
+
     put req = case req of
-        (ReadCoilsResponse cnt b)            -> f 1 cnt b
-        (ReadDiscreteInputsResponse cnt b)   -> f 2 cnt b
-        (ReadHoldingRegistersResponse cnt b) -> f 3 cnt b
-        (ReadInputRegistersResponse cnt b)   -> f 4 cnt b
-        (WriteSingleCoilResponse addr b)     -> f' 5 addr b
-        (WriteSingleRegisterResponse addr b) -> f' 6 addr b
+        (ReadCoilsResponse vals) -> f 1 vals
+        (ReadDiscreteInputsResponse vals) -> f 2 vals
+        (ReadHoldingRegistersResponse vals) -> f' 3 vals
+        (ReadInputRegistersResponse vals)   -> f' 4 vals
+        (WriteSingleCoilResponse addr val) ->
+          putWord8 5 >> putWord16be addr >> putWord16be (if val then 0xff00 else 0)
+        (WriteSingleRegisterResponse addr b) -> f'' 6 addr b
         (WriteDiagnosticRegisterResponse subfn dat) ->
             putWord8 8 >> putWord16be subfn >> putWord16be dat
-        (WriteMultipleCoilsResponse addr b)     -> f' 15 addr b
-        (WriteMultipleRegistersResponse addr b) -> f' 16 addr b
-        (ExceptionResponse fn ec)
-                       |fn >= 0x80    -> put fn >> put ec
-                       |otherwise     -> put (fn + 0x80) >> put ec
-        (UnknownFunctionResponse fn) -> put fn
+        (WriteMultipleCoilsResponse addr b)     -> f'' 15 addr b
+        (WriteMultipleRegistersResponse addr b) -> f'' 16 addr b
+        (ReadCoilsException ec) -> putWord8 0x81 >> put ec
+        (ReadDiscreteInputsException ec) -> putWord8 0x82 >> put ec
+        (ReadHoldingRegistersException ec) -> putWord8 0x83 >> put ec
+        (ReadInputRegistersException ec) -> putWord8 0x84 >> put ec
+        (WriteSingleCoilException ec) -> putWord8 0x85 >> put ec
+        (WriteSingleRegisterException ec) -> putWord8 0x86 >> put ec
+        (WriteDiagnosticRegisterException ec) -> putWord8 0x88 >> put ec
+        (WriteMultipleCoilsException ec) -> putWord8 0x8f >> put ec
+        (WriteMultipleRegistersException ec) -> putWord8 0x90 >> put ec
       where
-        f fn cnt b = putWord8 fn >> putWord8 cnt >> putByteString b
-        f' fn addr b = putWord8 fn >> putWord16be addr >> putWord16be b
+        f fn vals = do
+          putWord8 fn
+          putWord8 (fromIntegral $ (7 + length vals) `div` 8)
+          let a = listArray (0, length vals - 1) vals
+          putByteString $ toByteString a
+        f' fn vals = do
+          putWord8 fn
+          putWord8 (fromIntegral $ 2 * length vals)
+          mapM_ putWord16be vals
+        f'' fn addr b = putWord8 fn >> putWord16be addr >> putWord16be b
 
 
 data ExceptionCode
@@ -189,8 +216,7 @@ data ExceptionCode
     | MemoryParityError
     | GatewayPathUnavailable
     | GatewayTargetFailedToRespond
-    | UnknownExceptionCode {getUnknownException :: Word8}
-    deriving Show
+    deriving (Eq, Show)
 
 instance Serialize ExceptionCode where
     put ec = putWord8 $ case ec of
@@ -203,21 +229,16 @@ instance Serialize ExceptionCode where
         MemoryParityError            -> 0x08
         GatewayPathUnavailable       -> 0x0A
         GatewayTargetFailedToRespond -> 0x0B
-        (UnknownExceptionCode x)     -> x
     get = do
         c <- getWord8
-        return $ case c of
-          0x01 -> IllegalFunction
-          0x02 -> IllegalDataAddress
-          0x03 -> IllegalDataValue
-          0x04 -> SlaveDeviceFailure
-          0x05 -> Acknowledge
-          0x06 -> SlaveDeviceBusy
-          0x08 -> MemoryParityError
-          0x0A -> GatewayPathUnavailable
-          0x0B -> GatewayTargetFailedToRespond
-          x    -> UnknownExceptionCode x
-
-mkException :: SlaveId -> ExceptionCode -> ByteString
-mkException slaveId t = encode $
-    ModResponseFrame slaveId $ ExceptionResponse 0x81 t
+        case c of
+          0x01 -> return IllegalFunction
+          0x02 -> return IllegalDataAddress
+          0x03 -> return IllegalDataValue
+          0x04 -> return SlaveDeviceFailure
+          0x05 -> return Acknowledge
+          0x06 -> return SlaveDeviceBusy
+          0x08 -> return MemoryParityError
+          0x0A -> return GatewayPathUnavailable
+          0x0B -> return GatewayTargetFailedToRespond
+          _    -> fail $ "Unsupported exception code: " ++ show c
